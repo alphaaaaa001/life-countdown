@@ -1,0 +1,656 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>滚轮读秒 · 预览</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+  --bg-color: #0a0e1a;
+  --bg-gradient: linear-gradient(135deg, #0a0e1a 0%, #1a1f35 50%, #0a0e1a 100%);
+  --text-color: #e0e6ed;
+  --text-secondary: #6b7b95;
+  --text-tertiary: #a0aec0;
+  --panel-bg: rgba(20, 30, 50, 0.8);
+  --panel-border: rgba(74, 158, 255, 0.3);
+  --input-bg: rgba(10, 20, 40, 0.6);
+  --primary-color: #4a9eff;
+  --primary-light: #7ec8ff;
+  --shadow-color: rgba(0, 0, 0, 0.5);
+}
+body.light-mode {
+  --bg-color: #ffffff;
+  --bg-gradient: linear-gradient(135deg, #f5f7fa 0%, #ffffff 50%, #f5f7fa 100%);
+  --text-color: #1a202c;
+  --text-secondary: #4a5568;
+  --text-tertiary: #2d3748;
+  --panel-bg: rgba(255, 255, 255, 0.9);
+  --panel-border: rgba(0, 0, 0, 0.2);
+  --input-bg: rgba(247, 250, 252, 0.8);
+  --primary-color: #2563eb;
+  --primary-light: #3b82f6;
+  --shadow-color: rgba(0, 0, 0, 0.1);
+}
+
+body {
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  background: var(--bg-gradient);
+  color: var(--text-color);
+  min-height: 100vh;
+  padding: 24px 0 40px;
+  transition: background 0.3s ease, color 0.3s ease;
+}
+
+.theme-toggle {
+  position: fixed; top: 20px; right: 20px;
+  width: 50px; height: 50px; border-radius: 50%;
+  background: var(--panel-bg);
+  border: 2px solid var(--panel-border);
+  cursor: pointer; font-size: 1.4em;
+  display: flex; align-items: center; justify-content: center;
+  z-index: 1000; box-shadow: 0 4px 15px var(--shadow-color);
+}
+
+.container { width: 980px; max-width: 92%; margin: 0 auto; padding: 20px 40px; }
+
+.header { text-align: center; margin-bottom: 28px; }
+.header h1 {
+  font-size: 2em;
+  background: linear-gradient(135deg, var(--primary-color) 0%, var(--primary-light) 100%);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  background-clip: text; margin-bottom: 6px;
+}
+.subtitle { font-size: 0.85em; color: var(--text-secondary); letter-spacing: 3px; }
+
+/* ============ 读秒卡 ============ */
+.stat-card {
+  background: var(--panel-bg);
+  border: 2px solid var(--panel-border);
+  border-radius: 15px;
+  box-shadow: 0 5px 20px var(--shadow-color);
+  transition: background 0.3s ease, border-color 0.3s ease;
+}
+.stat-card.large {
+  padding: 34px 25px 30px;
+  background:
+    radial-gradient(120% 160% at 50% 0%, rgba(74, 158, 255, 0.10) 0%, rgba(74, 158, 255, 0) 65%),
+    var(--panel-bg);
+}
+.stat-label {
+  font-size: 0.9em; color: var(--text-secondary);
+  margin-bottom: 12px; letter-spacing: 1px; text-transform: uppercase;
+  text-align: center;
+}
+
+/* ---- 滚轮读秒行 ---- */
+.odo-row {
+  --digit-want: 80px;                             /* 滑块设的「想要多大」 */
+  --digit-size: var(--digit-want);                /* 实际生效（窄窗口会被压） */
+  --cell: 1.25em;                                 /* 一格的步进高度 */
+  --reel-dur: 600ms;
+  --reel-ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: center;
+  line-height: 1;
+  color: var(--primary-color);
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 窄窗口降级：滚轮是固定格宽，塞不下会换行，按窗口分档压字号 */
+@media (max-width: 880px) {
+  .odo-row { --digit-size: min(var(--digit-want), 46px); }
+  .stat-card.large { padding: 26px 18px 24px; }
+}
+@media (max-width: 620px) {
+  .odo-row { --digit-size: min(var(--digit-want), 32px); }
+}
+
+/* 天数：静态数字（不滚 —— 一天才动一次，滚它没意义还吵） */
+.odo-num {
+  font-size: var(--digit-size);
+  height: var(--cell);
+  line-height: var(--cell);
+  letter-spacing: 0.01em;
+}
+
+/* 一位数字 = 一个竖向滚轮 */
+.reel {
+  display: block;
+  font-size: var(--digit-size);
+  width: 0.64em;
+  height: var(--cell);
+  overflow: hidden;
+  text-align: center;
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 14%, #000 86%, transparent 100%);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 14%, #000 86%, transparent 100%);
+}
+.reel-track {
+  display: block;
+  transition: transform var(--reel-dur) var(--reel-ease);
+  will-change: transform;
+}
+.reel-track > i {
+  display: block;
+  height: var(--cell);
+  line-height: var(--cell);
+  font-style: normal;
+}
+
+.odo-unit {
+  font-size: calc(var(--digit-size) * 0.29);
+  font-weight: 600;
+  color: var(--text-tertiary);
+  line-height: 1;
+  margin: 0 0.42em 0 0.62em;
+  padding-bottom: 0.58em;      /* 把单位提到数字基线附近 */
+}
+
+/* ============ 控制面板 ============ */
+.panelctrl {
+  margin-top: 24px;
+  background: var(--panel-bg);
+  border: 2px solid var(--panel-border);
+  border-radius: 15px;
+  padding: 22px 26px;
+  box-shadow: 0 5px 20px var(--shadow-color);
+  display: grid;
+  gap: 16px;
+  transition: background 0.3s ease, border-color 0.3s ease;
+}
+.ctrl-row { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.ctrl-row > label {
+  flex: 0 0 200px;
+  font-size: 0.92em;
+  color: var(--text-tertiary);
+  letter-spacing: 0.5px;
+}
+.ctrl-row > label b { color: var(--primary-color); font-size: 1.05em; }
+
+.seg { display: inline-flex; border: 2px solid var(--panel-border); border-radius: 10px; overflow: hidden; }
+.seg button {
+  background: transparent; border: none; cursor: pointer;
+  color: var(--text-secondary);
+  padding: 9px 18px; font-size: 0.9em;
+  font-family: inherit;
+  transition: background 0.2s, color 0.2s;
+}
+.seg button + button { border-left: 1px solid var(--panel-border); }
+.seg button:hover { color: var(--text-color); }
+.seg button.on {
+  background: var(--primary-color);
+  color: #fff;
+}
+
+input[type=range] {
+  flex: 1 1 240px; max-width: 340px; height: 6px;
+  -webkit-appearance: none; appearance: none;
+  background: var(--input-bg); border-radius: 3px; outline: none;
+}
+input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 18px; height: 18px; border-radius: 50%;
+  background: var(--primary-color); cursor: pointer;
+  box-shadow: 0 0 10px rgba(74, 158, 255, 0.6);
+}
+
+.datain { display: flex; gap: 10px; }
+.datain input {
+  padding: 9px 12px; font-size: 0.9em; font-family: inherit;
+  background: var(--input-bg); color: var(--text-color);
+  border: 2px solid var(--panel-border); border-radius: 8px; outline: none;
+}
+.datain input[type=date] { width: 170px; }
+.datain input[type=number] { width: 90px; }
+
+.readout {
+  margin-top: 18px; padding: 14px 18px;
+  background: var(--input-bg);
+  border: 1px dashed var(--panel-border);
+  border-radius: 12px;
+  font-size: 0.88em; line-height: 1.9;
+  color: var(--text-tertiary);
+}
+.readout b { color: var(--primary-color); font-weight: 700; }
+.readout .k { color: var(--text-secondary); }
+.readout .warn { color: #e8a33d; font-size: 0.92em; }
+</style>
+</head>
+<body>
+
+<button class="theme-toggle" id="bTheme"><span>🌙</span></button>
+
+<div class="container">
+  <div class="header">
+    <h1>滚轮读秒 · 预览</h1>
+    <div class="subtitle">ODOMETER REEL PREVIEW</div>
+  </div>
+
+  <div class="stat-card large">
+    <div class="stat-label">剩余生命倒计时</div>
+    <div class="odo-row" id="odoRow"></div>
+  </div>
+
+  <div class="panelctrl">
+    <div class="ctrl-row">
+      <label>滚动范围</label>
+      <div class="seg" id="segScope">
+        <button data-v="sec">只滚秒</button>
+        <button data-v="min">分 + 秒</button>
+        <button data-v="all" class="on">时 + 分 + 秒</button>
+      </div>
+    </div>
+
+    <div class="ctrl-row">
+      <label>滚动时长 <b id="vDur">600</b> ms</label>
+      <input type="range" id="rDur" min="0" max="600" step="10" value="600">
+    </div>
+
+    <div class="ctrl-row">
+      <label>缓动曲线</label>
+      <div class="seg" id="segEase">
+        <button data-v="hard">硬切</button>
+        <button data-v="smooth" class="on">平滑</button>
+        <button data-v="bounce">回弹</button>
+      </div>
+    </div>
+
+    <div class="ctrl-row">
+      <label>数字字号 <b id="vSize">80</b> px</label>
+      <input type="range" id="rSize" min="34" max="96" step="2" value="80">
+    </div>
+
+    <div class="ctrl-row">
+      <label>演示倍速</label>
+      <div class="seg" id="segSpeed">
+        <button data-v="1" class="on">1×</button>
+        <button data-v="5">5×</button>
+        <button data-v="15">15×</button>
+      </div>
+    </div>
+
+    <div class="ctrl-row">
+      <label>数据源（可从正式版自动读取）</label>
+      <div class="datain">
+        <input type="date" id="birthDate">
+        <input type="number" id="expectedAge" min="1" max="150">
+      </div>
+    </div>
+  </div>
+
+  <div class="readout" id="readout"></div>
+</div>
+
+<script>
+// ============================================================
+// 滚轮（odometer）读秒 —— 预览页
+// 参考：CodePen「CSS-Only Countdown Clock」(kindofone / Yogev Ahuvia)
+// 取它的视觉语言（竖向滚轮 + 窄视窗裁切 + 硬切缓动），
+// 但驱动方式换成 JS —— 因为原版是「页面加载即启动的固定时长动画」，
+// 没法对准真实时钟、没法设成任意时长，也做不了归零。
+// ============================================================
+
+// >>> ODO_PURE_MATH_BEGIN  纯函数区（不引用 DOM，供离线对照测试整块抽取）
+// 毫秒差 → { days, hours, minutes, seconds }
+function odoSplitDuration(diff) {
+  if (diff <= 0) return { days: 0, hours: 0, minutes: 0, seconds: 0 };
+  return {
+    days:    Math.floor(diff / 86400000),
+    hours:   Math.floor((diff % 86400000) / 3600000),
+    minutes: Math.floor((diff % 3600000) / 60000),
+    seconds: Math.floor((diff % 60000) / 1000)
+  };
+}
+
+// 数值 → 定长数字数组（高位补零，超长截尾）
+function odoDigitsOf(value, count) {
+  return String(Math.max(0, Math.floor(value)))
+    .padStart(count, '0')
+    .slice(-count)
+    .split('')
+    .map(Number);
+}
+
+// 每一位的「圈长」（这根滚轮上到底印几个数字就回绕）：
+//   个位 0-9 → 10 格 ；分/秒的十位 0-5 → 6 格 ；小时的十位 0-2 → 3 格
+// 关键：十位不是 0-9 的十格轮。秒从 00 跳到 59 时，十位是 0→5，
+// 若按十格轮算就得一次滚 5 格（糊成一片、方向还乱）；按 6 格轮算，
+// 每一次永远只滚 1 格，跟机械里程表一样匀速。
+function odoCycleFor(group, idx) {
+  if (idx === 0) return 10;                       // 个位
+  if (group === 'hours') return 3;                // 时十位：0,1,2
+  return 6;                                       // 分/秒十位：0-5
+}
+
+// 滚轮第 i 格上印的数字。倒计时递减、滚轮一律「向上滚」，
+// 所以格子里要按【递减】顺序排：0, 9, 8, …, 1, 0, 9, 8, …
+function odoCellDigit(i, cycle) {
+  return (cycle - (i % cycle)) % cycle;
+}
+
+// 显示数字 d 时，滚轮该停在的格索引
+function odoOffsetForDigit(d, cycle) {
+  return (cycle - (d % cycle)) % cycle;
+}
+
+// 从 prevDigit 变到 nextDigit，滚轮要向上滚几格。
+// 按各自的圈长算 → 正常递减永远是 1 格（含回绕）。
+function odoReelDelta(prevDigit, nextDigit, cycle) {
+  return ((prevDigit - nextDigit) % cycle + cycle) % cycle;
+}
+
+// 滚动一步的状态机。offset 会被折回 [0, cycle) ——
+// 因为格子排布以 cycle 为周期，折回前后画面完全一样（无动画，看不出来）。
+function odoAdvance(offset, prevDigit, nextDigit, cycle) {
+  const delta = odoReelDelta(prevDigit, nextDigit, cycle);
+  if (delta === 0) return { offset, delta: 0, folded: false };
+  let o = offset, folded = false;
+  if (o + delta >= cycle) { o = o % cycle; folded = true; }
+  return { offset: o + delta, delta, folded };
+}
+
+// 浏览器一帧。滚动动画结束后，必须至少留出一帧让数字"落格"，
+// 否则它永远停在两格之间、读出来就是相邻的另一个数字。
+const ODO_FRAME_MS = 1000 / 60;
+
+// 演示倍速下的「有效滚动时长」。
+// 读数节拍被倍速压缩成 dt = 1000/speed 毫秒，而滚动动画时长若还按原值走，
+// 就会出现「动画还没跑完、下一次更新又来了」——滚轮永远追不上目标。
+// 实测（Electron 真渲染进程，60 次采样 × 8 组参数）：
+//   · dur > dt            → 「显示数字 == 真实读数」的时间占比恒为 0%，屏幕上是错的数字
+//   · dur = dt - 10%dt    → 15× 下仍为 0%（停稳期只剩 6.7ms，不足一帧）
+//   · dur <= dt - 一帧    → 恢复正常
+// 所以钳制线取「节拍减一帧」，而不是按比例留百分比 —— 高速档下百分比会小于一帧。
+// 只钳制、不缩放：绝不偷偷改动用户设定的数值，只保证它在当前倍速下不会算错。
+function odoEffectiveDur(durWant, speed) {
+  const dt = 1000 / Math.max(speed, 1e-6);
+  const cap = Math.max(0, dt - ODO_FRAME_MS);
+  return Math.min(durWant, cap);
+}
+// <<< ODO_PURE_MATH_END
+
+
+// ===== 配置与状态 =====
+const EASE = {
+  hard:   'cubic-bezier(1, 0, 1, 0)',        // 原版的味道：几乎瞬跳
+  smooth: 'cubic-bezier(0.22, 0.61, 0.36, 1)',
+  bounce: 'cubic-bezier(0.34, 1.56, 0.64, 1)'
+};
+const REEL_CYCLES = 2;       // 每条滚带印几圈数字（折回后偏移 < 圈长，两圈足够）
+
+// 默认值 = 正式版定稿值（时+分+秒 / 600ms / 平滑 / 80px），改参数从这里出发
+let cfg = { scope: 'all', dur: 600, ease: 'smooth', size: 80, speed: 1 };
+let reels = [];
+let lastKey = '';
+
+// ===== 数据源 =====
+const FALLBACK = { birthDate: '2004-10-23', expectedAge: 80 };
+
+function readSaved() {
+  try {
+    const raw = localStorage.getItem('lifeCountdownData');
+    if (!raw) return null;
+    const d = JSON.parse(raw);
+    if (d && d.birthDate && d.expectedAge) return d;
+  } catch (e) { /* 非 file:// 或隐私模式，忽略 */ }
+  return null;
+}
+
+function parseLocalDate(str) {
+  const [y, m, d] = String(str).split('-').map(Number);
+  return new Date(y, m - 1, d);
+}
+
+function calcEndDate(birthDate, expectedAge) {
+  return new Date(
+    birthDate.getFullYear() + expectedAge,
+    birthDate.getMonth(),
+    birthDate.getDate()
+  );
+}
+
+// ===== 滚轮构建 =====
+function makeReel(group, idx) {
+  const cycle = odoCycleFor(group, idx);
+  const reel = document.createElement('span');
+  reel.className = 'reel';
+
+  const track = document.createElement('span');
+  track.className = 'reel-track';
+  for (let i = 0; i < cycle * REEL_CYCLES; i++) {
+    const cell = document.createElement('i');
+    cell.textContent = String(odoCellDigit(i, cycle));
+    track.appendChild(cell);
+  }
+  reel.appendChild(track);
+  return { reel, track, group, idx, cycle, offset: 0, digit: 0, ready: false };
+}
+
+function makeUnit(text) {
+  const s = document.createElement('span');
+  s.className = 'odo-unit';
+  s.textContent = text;
+  return s;
+}
+
+function buildRow() {
+  const row = document.getElementById('odoRow');
+  row.innerHTML = '';
+  reels = [];
+
+  // 天：静态数字
+  const days = document.createElement('span');
+  days.className = 'odo-num';
+  days.id = 'odoDays';
+  days.textContent = '0';
+  row.appendChild(days);
+  row.appendChild(makeUnit('天'));
+
+  for (const [group, label] of [['hours', '时'], ['minutes', '分'], ['seconds', '秒']]) {
+    for (let idx = 1; idx >= 0; idx--) {     // 1 = 十位，0 = 个位
+      const r = makeReel(group, idx);
+      reels.push(r);
+      row.appendChild(r.reel);
+    }
+    row.appendChild(makeUnit(label));
+  }
+  applyCssVars();
+}
+
+function applyCssVars() {
+  const row = document.getElementById('odoRow');
+  row.style.setProperty('--digit-want', cfg.size + 'px');
+  // 用「有效滚动时长」而不是设定值：倍速下必须按节拍钳制，否则数字会显示错
+  row.style.setProperty('--reel-dur', odoEffectiveDur(cfg.dur, cfg.speed) + 'ms');
+  row.style.setProperty('--reel-ease', EASE[cfg.ease]);
+}
+
+// 该位是否参与滚动
+function isRolling(group) {
+  if (cfg.scope === 'sec') return group === 'seconds';
+  if (cfg.scope === 'min') return group === 'minutes' || group === 'seconds';
+  return true;
+}
+
+// 无动画地把滚轮钉到某个格索引
+function pinReel(r, offset) {
+  r.track.style.transition = 'none';
+  r.track.style.transform = `translateY(calc(${-offset} * var(--cell)))`;
+  void r.track.offsetHeight;                 // 强制重排，让 none 生效
+  r.track.style.transition = '';
+}
+
+// 喂一个新数字
+function feedReel(r, digit, animate) {
+  if (!r.ready) {                            // 首次：直接落位，不滚
+    r.digit = digit;
+    r.offset = odoOffsetForDigit(digit, r.cycle);
+    pinReel(r, r.offset);
+    r.ready = true;
+    return;
+  }
+  if (!animate) {                            // 该位不参与滚动：钉住就行
+    if (digit === r.digit) return;
+    r.digit = digit;
+    r.offset = odoOffsetForDigit(digit, r.cycle);
+    pinReel(r, r.offset);
+    return;
+  }
+
+  const step = odoAdvance(r.offset, r.digit, digit, r.cycle);
+  if (step.delta === 0) return;
+  r.digit = digit;
+
+  // 数值一次跳了整圈以上（休眠唤醒、改了数据）→ 直接落位，别滚成电风扇
+  if (step.delta >= r.cycle) {
+    r.offset = odoOffsetForDigit(digit, r.cycle);
+    pinReel(r, r.offset);
+    return;
+  }
+
+  if (step.folded) {                         // 折回：无动画，画面完全不变
+    r.offset = r.offset % r.cycle;
+    pinReel(r, r.offset);
+  }
+
+  r.offset = step.offset;
+  r.track.style.transform = `translateY(calc(${-r.offset} * var(--cell)))`;
+}
+
+// ===== 时钟（带演示倍速） =====
+let baseReal = performance.now();
+let baseVirtual = Date.now();
+
+function virtualNow() {
+  return baseVirtual + (performance.now() - baseReal) * cfg.speed;
+}
+function setSpeed(s) {
+  baseVirtual = virtualNow();
+  baseReal = performance.now();
+  cfg.speed = s;
+  applyCssVars();        // 有效滚动时长依赖倍速，必须跟着重算
+  refreshReadout();
+}
+
+function readParts() {
+  const bd = parseLocalDate(document.getElementById('birthDate').value);
+  const age = parseInt(document.getElementById('expectedAge').value, 10) || 0;
+  const end = calcEndDate(bd, age);
+  return odoSplitDuration(end - virtualNow());
+}
+
+function render() {
+  const p = readParts();
+  const key = p.days + '|' + p.hours + '|' + p.minutes + '|' + p.seconds;
+  if (key === lastKey) return;
+  lastKey = key;
+
+  document.getElementById('odoDays').textContent = p.days;
+
+  const hh = odoDigitsOf(p.hours, 2);
+  const mm = odoDigitsOf(p.minutes, 2);
+  const ss = odoDigitsOf(p.seconds, 2);
+  const want = { hours: hh, minutes: mm, seconds: ss };
+
+  for (const r of reels) {
+    feedReel(r, want[r.group][1 - r.idx], isRolling(r.group));
+  }
+  refreshReadout(p);
+}
+
+function frame() {
+  render();
+  requestAnimationFrame(frame);
+}
+
+// ===== 参数读数 =====
+function refreshReadout(p) {
+  const scopeText = { sec: '只滚秒', min: '分 + 秒', all: '时 + 分 + 秒' }[cfg.scope];
+  const easeText = { hard: '硬切', smooth: '平滑', bounce: '回弹' }[cfg.ease];
+  const now = p || readParts();
+  const dt = 1000 / cfg.speed;
+  const effDur = odoEffectiveDur(cfg.dur, cfg.speed);
+  const clamped = effDur < cfg.dur - 0.5;
+  // 如实说明：倍速压缩了读数节拍，滚动时长必须跟着钳制，否则屏幕上的数字是错的
+  const durNote = clamped
+    ? `<span class="k">滚动时长</span> ${cfg.dur} ms → <b>实际 ${Math.round(effDur)} ms</b>` +
+      `<span class="warn">（节拍仅 ${Math.round(dt)} ms，已钳制）</span>`
+    : `<span class="k">滚动时长</span> <b>${cfg.dur} ms</b>` +
+      `<span class="k">（节拍 ${Math.round(dt)} ms，占 ${Math.round(100 * effDur / dt)}%）</span>`;
+  document.getElementById('readout').innerHTML =
+    `<span class="k">滚动范围</span> <b>${scopeText}</b>　` +
+    durNote + `　` +
+    `<span class="k">缓动</span> <b>${easeText}</b>` +
+    `<span class="k"> (${EASE[cfg.ease]})</span><br>` +
+    `<span class="k">数字字号</span> <b>${cfg.size} px</b>　` +
+    `<span class="k">演示倍速</span> <b>${cfg.speed}×</b><br>` +
+    `<span class="k">当前读秒</span> <b>${now.days}</b> 天 ` +
+    `<b>${String(now.hours).padStart(2, '0')}</b> 时 ` +
+    `<b>${String(now.minutes).padStart(2, '0')}</b> 分 ` +
+    `<b>${String(now.seconds).padStart(2, '0')}</b> 秒`;
+}
+
+// ===== 控件绑定 =====
+function bindSeg(id, key, after) {
+  const box = document.getElementById(id);
+  box.addEventListener('click', (e) => {
+    const btn = e.target.closest('button');
+    if (!btn) return;
+    [...box.querySelectorAll('button')].forEach(b => b.classList.toggle('on', b === btn));
+    const v = btn.dataset.v;
+    if (key === 'scope') cfg.scope = v;
+    else if (key === 'ease') { cfg.ease = v; applyCssVars(); }
+    else if (key === 'speed') setSpeed(Number(v));
+    if (after) after();
+    lastKey = '';
+    render();
+  });
+}
+
+function initControls() {
+  bindSeg('segScope', 'scope');
+  bindSeg('segEase', 'ease');
+  bindSeg('segSpeed', 'speed');
+
+  const rDur = document.getElementById('rDur');
+  rDur.addEventListener('input', () => {
+    cfg.dur = Number(rDur.value);
+    document.getElementById('vDur').textContent = cfg.dur;
+    applyCssVars();
+    refreshReadout();
+  });
+
+  const rSize = document.getElementById('rSize');
+  rSize.addEventListener('input', () => {
+    cfg.size = Number(rSize.value);
+    document.getElementById('vSize').textContent = cfg.size;
+    applyCssVars();
+  });
+
+  document.getElementById('birthDate').addEventListener('input', () => { lastKey = ''; });
+  document.getElementById('expectedAge').addEventListener('input', () => { lastKey = ''; });
+
+  document.getElementById('bTheme').addEventListener('click', (e) => {
+    const light = document.body.classList.toggle('light-mode');
+    e.currentTarget.querySelector('span').textContent = light ? '☀️' : '🌙';
+  });
+}
+
+// ===== 启动 =====
+(function boot() {
+  const saved = readSaved();
+  document.getElementById('birthDate').value = (saved && saved.birthDate) || FALLBACK.birthDate;
+  document.getElementById('expectedAge').value = (saved && saved.expectedAge) || FALLBACK.expectedAge;
+
+  buildRow();
+  initControls();
+  render();
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

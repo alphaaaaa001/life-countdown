@@ -1,6 +1,7 @@
 // 数据存储
 let countdownData = null;
 let intervalId = null;
+let alignTimeoutId = null;      // 对齐到真实秒边界的那个一次性定时器
 let heartbeatRafId = null;
 
 // 页面加载时检查是否有保存的数据
@@ -8,6 +9,7 @@ window.addEventListener('DOMContentLoaded', () => {
   loadSavedData();
   loadTheme();
   initHeartbeat();
+  buildOdoRow();
 });
 
 // 加载主题
@@ -259,6 +261,217 @@ function heartbeatFrame(ts) {
   heartbeatRafId = requestAnimationFrame(heartbeatFrame);
 }
 
+// ===== 读秒：滚轮（odometer）=====
+// 视觉语言借自 CodePen 的「CSS-Only Countdown Clock」（竖向滚轮 + 窄视窗裁切），
+// 但驱动逻辑换成了 JS —— 原版是「页面加载即启动的固定时长动画」，
+// 没法对准真实时钟、没法设成任意时长、也没法归零。这里的滚轮由真实读数驱动。
+//
+// 参数（在 odometer-preview.html 上定稿）：
+//   滚动范围 = 时 + 分 + 秒（天一天才动一次，滚它没意义还吵 → 保持静态数字）
+//   滚动时长 = 600ms ／ 缓动 = 平滑 ／ 数字字号 = 80px
+// 读数节拍是 setInterval(…, 1000)；600ms 远小于节拍，正式版永不触顶被钳制。
+const ODO_DIGIT_PX    = 80;                                  // 数字字号(px)
+const ODO_ROLL_MS     = 600;                                 // 滚动时长(ms)
+const ODO_EASE        = 'cubic-bezier(0.22, 0.61, 0.36, 1)'; // 平滑
+const ODO_REEL_CYCLES = 2;                                   // 每条滚带印几圈数字（折回后偏移 < 圈长，两圈足够）
+
+// >>> ODO_PURE_MATH_BEGIN  纯函数区（不引用 DOM，供离线对照测试整块抽取）
+// 毫秒差 → { days, hours, minutes, seconds }
+function odoSplitDuration(diff) {
+  if (diff <= 0) return { days: 0, hours: 0, minutes: 0, seconds: 0 };
+  return {
+    days:    Math.floor(diff / 86400000),
+    hours:   Math.floor((diff % 86400000) / 3600000),
+    minutes: Math.floor((diff % 3600000) / 60000),
+    seconds: Math.floor((diff % 60000) / 1000)
+  };
+}
+
+// 数值 → 定长数字数组（高位补零，超长截尾）
+function odoDigitsOf(value, count) {
+  return String(Math.max(0, Math.floor(value)))
+    .padStart(count, '0')
+    .slice(-count)
+    .split('')
+    .map(Number);
+}
+
+// 每一位的「圈长」（这根滚轮上到底印几个数字就回绕）：
+//   个位 0-9 → 10 格 ；分/秒的十位 0-5 → 6 格 ；小时的十位 0-2 → 3 格
+// 关键：十位不是 0-9 的十格轮。秒从 00 跳到 59 时，十位是 0→5，
+// 若按十格轮算就得一次滚 5 格（糊成一片、方向还乱）；按 6 格轮算，
+// 每一次永远只滚 1 格，跟机械里程表一样匀速。
+function odoCycleFor(group, idx) {
+  if (idx === 0) return 10;                       // 个位
+  if (group === 'hours') return 3;                // 时十位：0,1,2
+  return 6;                                       // 分/秒十位：0-5
+}
+
+// 滚轮第 i 格上印的数字。倒计时递减、滚轮一律「向上滚」，
+// 所以格子里要按【递减】顺序排：0, 9, 8, …, 1, 0, 9, 8, …
+function odoCellDigit(i, cycle) {
+  return (cycle - (i % cycle)) % cycle;
+}
+
+// 显示数字 d 时，滚轮该停在的格索引
+function odoOffsetForDigit(d, cycle) {
+  return (cycle - (d % cycle)) % cycle;
+}
+
+// 从 prevDigit 变到 nextDigit，滚轮要向上滚几格。
+// 按各自的圈长算 → 正常递减永远是 1 格（含回绕）。
+function odoReelDelta(prevDigit, nextDigit, cycle) {
+  return ((prevDigit - nextDigit) % cycle + cycle) % cycle;
+}
+
+// 滚动一步的状态机。offset 会被折回 [0, cycle) ——
+// 因为格子排布以 cycle 为周期，折回前后画面完全一样（无动画，看不出来）。
+function odoAdvance(offset, prevDigit, nextDigit, cycle) {
+  const delta = odoReelDelta(prevDigit, nextDigit, cycle);
+  if (delta === 0) return { offset, delta: 0, folded: false };
+  let o = offset, folded = false;
+  if (o + delta >= cycle) { o = o % cycle; folded = true; }
+  return { offset: o + delta, delta, folded };
+}
+
+// 浏览器一帧。滚动动画结束后，必须至少留出一帧让数字"落格"，
+// 否则它永远停在两格之间、读出来就是相邻的另一个数字。
+const ODO_FRAME_MS = 1000 / 60;
+
+// 演示倍速下的「有效滚动时长」。
+// 读数节拍被倍速压缩成 dt = 1000/speed 毫秒，而滚动动画时长若还按原值走，
+// 就会出现「动画还没跑完、下一次更新又来了」——滚轮永远追不上目标。
+// 实测（Electron 真渲染进程，60 次采样 × 8 组参数）：
+//   · dur > dt            → 「显示数字 == 真实读数」的时间占比恒为 0%，屏幕上是错的数字
+//   · dur = dt - 10%dt    → 15× 下仍为 0%（停稳期只剩 6.7ms，不足一帧）
+//   · dur <= dt - 一帧    → 恢复正常
+// 所以钳制线取「节拍减一帧」，而不是按比例留百分比 —— 高速档下百分比会小于一帧。
+// 只钳制、不缩放：绝不偷偷改动用户设定的数值，只保证它在当前倍速下不会算错。
+function odoEffectiveDur(durWant, speed) {
+  const dt = 1000 / Math.max(speed, 1e-6);
+  const cap = Math.max(0, dt - ODO_FRAME_MS);
+  return Math.min(durWant, cap);
+}
+// <<< ODO_PURE_MATH_END
+let odoReels = [];          // 6 个滚轮：时/分/秒 各两位
+let odoDaysEl = null;       // 天数（静态数字，不滚）
+
+// 一位数字 = 一个竖向滚轮
+function odoMakeReel(group, idx) {
+  const cycle = odoCycleFor(group, idx);
+  const reel = document.createElement('span');
+  reel.className = 'reel';
+
+  const track = document.createElement('span');
+  track.className = 'reel-track';
+  for (let i = 0; i < cycle * ODO_REEL_CYCLES; i++) {
+    const cell = document.createElement('i');
+    cell.textContent = String(odoCellDigit(i, cycle));
+    track.appendChild(cell);
+  }
+  reel.appendChild(track);
+  return { reel, track, group, idx, cycle, offset: 0, digit: 0, ready: false };
+}
+
+// 单位（天/时/分/秒）
+function odoMakeUnit(text) {
+  const s = document.createElement('span');
+  s.className = 'odo-unit';
+  s.textContent = text;
+  return s;
+}
+
+// 搭出「X 天 HH 时 MM 分 SS 秒」这一行
+function buildOdoRow() {
+  const row = document.getElementById('odoRow');
+  row.innerHTML = '';
+  odoReels = [];
+
+  odoDaysEl = document.createElement('span');
+  odoDaysEl.className = 'odo-num';
+  odoDaysEl.textContent = '0';
+  row.appendChild(odoDaysEl);
+  row.appendChild(odoMakeUnit('天'));
+
+  for (const [group, label] of [['hours', '时'], ['minutes', '分'], ['seconds', '秒']]) {
+    for (let idx = 1; idx >= 0; idx--) {     // 1 = 十位，0 = 个位
+      const r = odoMakeReel(group, idx);
+      odoReels.push(r);
+      row.appendChild(r.reel);
+    }
+    row.appendChild(odoMakeUnit(label));
+  }
+  odoApplyVars();
+}
+
+// 把定稿参数写进 CSS 变量（JS 常量是唯一真源；style.css 里的同值只是启动前的兜底）
+function odoApplyVars() {
+  const row = document.getElementById('odoRow');
+  row.style.setProperty('--digit-want', ODO_DIGIT_PX + 'px');
+  // 走「有效滚动时长」而不是直接写设定值：万一以后把读数节拍调快了，
+  // 这里会自动按节拍钳制，不会再出现「屏幕上映着错数字」那种情况。
+  row.style.setProperty('--reel-dur', odoEffectiveDur(ODO_ROLL_MS, 1) + 'ms');
+  row.style.setProperty('--reel-ease', ODO_EASE);
+}
+
+// 无动画地把滚轮钉到某个格索引
+function odoPinReel(r, offset) {
+  r.track.style.transition = 'none';
+  r.track.style.transform = `translateY(calc(${-offset} * var(--cell)))`;
+  void r.track.offsetHeight;                 // 强制重排，让 none 生效
+  r.track.style.transition = '';
+}
+
+// 喂一个新数字
+function odoFeedReel(r, digit) {
+  if (!r.ready) {                            // 首次：直接落位，不滚
+    r.digit = digit;
+    r.offset = odoOffsetForDigit(digit, r.cycle);
+    odoPinReel(r, r.offset);
+    r.ready = true;
+    return;
+  }
+
+  const step = odoAdvance(r.offset, r.digit, digit, r.cycle);
+  if (step.delta === 0) return;
+  r.digit = digit;
+
+  // 数值一次跳了整圈以上（休眠唤醒、改了设置）→ 直接落位，别滚成电风扇
+  if (step.delta >= r.cycle) {
+    r.offset = odoOffsetForDigit(digit, r.cycle);
+    odoPinReel(r, r.offset);
+    return;
+  }
+
+  if (step.folded) {                         // 折回：无动画，画面完全不变
+    r.offset = r.offset % r.cycle;
+    odoPinReel(r, r.offset);
+  }
+
+  r.offset = step.offset;
+  r.track.style.transform = `translateY(calc(${-r.offset} * var(--cell)))`;
+}
+
+// 用一份读数刷新整行滚轮
+function odoFeedParts(parts) {
+  if (!odoDaysEl) return;
+  odoDaysEl.textContent = String(parts.days);
+
+  const want = {
+    hours:   odoDigitsOf(parts.hours, 2),
+    minutes: odoDigitsOf(parts.minutes, 2),
+    seconds: odoDigitsOf(parts.seconds, 2)
+  };
+  for (const r of odoReels) {
+    odoFeedReel(r, want[r.group][1 - r.idx]);
+  }
+}
+
+// 「重新设置」后把滚轮状态清干净：下次启动直接落位，不从上一次的偏移开始滚
+function odoResetReels() {
+  for (const r of odoReels) { r.ready = false; r.offset = 0; r.digit = 0; }
+}
+
 // 加载保存的数据
 function loadSavedData() {
   const saved = localStorage.getItem('lifeCountdownData');
@@ -305,17 +518,6 @@ function calcEndDate(birthDate, expectedAge) {
     birthDate.getMonth(),
     birthDate.getDate()
   );
-}
-
-// 毫秒差 → { days, hours, minutes, seconds }
-function splitDuration(diff) {
-  if (diff <= 0) return { days: 0, hours: 0, minutes: 0, seconds: 0 };
-  return {
-    days:    Math.floor(diff / (1000 * 60 * 60 * 24)),
-    hours:   Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60)),
-    minutes: Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60)),
-    seconds: Math.floor((diff % (1000 * 60)) / 1000)
-  };
 }
 
 // 启动倒计时
@@ -387,15 +589,10 @@ function updateCountdown() {
   document.getElementById('passedYears').textContent = currentAge;
   document.getElementById('remainingYears').textContent = remainingYears;
   
-  // 到预期寿命终点（生日当天 00:00）还有多久
+  // 到预期寿命终点（生日当天 00:00）还有多久 → 交给滚轮逐位翻牌
   const endDate = calcEndDate(birthDate, expectedAge);
-  const { days, hours, minutes, seconds } = splitDuration(endDate - now);
-  
-  document.getElementById('daysToEnd').textContent = days;
-  document.getElementById('hoursToEnd').textContent = String(hours).padStart(2, '0');
-  document.getElementById('minutesToEnd').textContent = String(minutes).padStart(2, '0');
-  document.getElementById('secondsToEnd').textContent = String(seconds).padStart(2, '0');
-  
+  odoFeedParts(odoSplitDuration(endDate - now));
+
   // 计算人生进度
   const progressPercent = ((currentAge / expectedAge) * 100).toFixed(2);
   document.getElementById('progressPercent').textContent = progressPercent + '%';
@@ -436,10 +633,21 @@ function startUpdateInterval() {
   // 清除旧的定时器
   if (intervalId) {
     clearInterval(intervalId);
+    intervalId = null;
   }
-  
-  // 每秒更新一次
-  intervalId = setInterval(updateCountdown, 1000);
+  if (alignTimeoutId) {
+    clearTimeout(alignTimeoutId);
+    alignTimeoutId = null;
+  }
+
+  // 先对齐到「真实秒」的边界再起跳，之后每 1000ms 一次。
+  // 这样滚轮总是在秒真正翻牌的那一刻开始滚；否则它会在「启动后第 N 毫秒」
+  // 这个随机相位上滚，读数看着总慢半拍。
+  alignTimeoutId = setTimeout(() => {
+    alignTimeoutId = null;
+    updateCountdown();
+    intervalId = setInterval(updateCountdown, 1000);
+  }, 1000 - (Date.now() % 1000));
 }
 
 // 重置应用
@@ -450,7 +658,12 @@ function resetApp() {
       clearInterval(intervalId);
       intervalId = null;
     }
-    
+    if (alignTimeoutId) {
+      clearTimeout(alignTimeoutId);
+      alignTimeoutId = null;
+    }
+    odoResetReels();          // 滚轮状态清干净，下次启动直接落位不滚
+
     // 清除数据
     countdownData = null;
     localStorage.removeItem('lifeCountdownData');
@@ -469,6 +682,9 @@ function resetApp() {
 window.addEventListener('beforeunload', () => {
   if (intervalId) {
     clearInterval(intervalId);
+  }
+  if (alignTimeoutId) {
+    clearTimeout(alignTimeoutId);
   }
   if (heartbeatRafId) {
     cancelAnimationFrame(heartbeatRafId);

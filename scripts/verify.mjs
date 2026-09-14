@@ -5,7 +5,7 @@
  *
  * 覆盖三块：
  *   [A] 代码卫生：死代码残留、化石 id、getElementById 与 HTML 的交叉核对
- *   [B] 日期逻辑：固定 now 跑 parseLocalDate / calcAge / calcEndDate / splitDuration
+ *   [B] 日期逻辑：固定 now 跑 parseLocalDate / calcAge / calcEndDate / odoSplitDuration
  *   [C] 心跳线：常量自洽、波形形态、t=0 整屏空白、真扫描测节律、漂移、留痕模型
  *
  * 所有期望值都从源码常量推导，不写死数字 —— 改参数后这个脚本仍然有效。
@@ -41,6 +41,11 @@ for (const id of ['daysToNext', 'hoursToNext', 'minutesToNext', 'secondsToNext']
   const n = (jsSrc + htmlSrc).split(id).length - 1;
   ok(`化石 id 已改名：${id}`, n === 0, n ? `残留 ${n} 处` : '');
 }
+// 读秒从「四个 span 直接写数字」改成了滚轮 —— 旧 id 不该再有人引用
+for (const id of ['daysToEnd', 'hoursToEnd', 'minutesToEnd', 'secondsToEnd']) {
+  const n = (jsSrc + htmlSrc).split(id).length - 1;
+  ok(`读秒旧 span id 已移除：${id}`, n === 0, n ? `残留 ${n} 处` : '');
+}
 {
   const called = [...new Set([...jsSrc.matchAll(/getElementById\('([^']+)'\)/g)].map(m => m[1]))];
   const missing = called.filter(id => !htmlSrc.includes(`id="${id}"`));
@@ -56,9 +61,9 @@ ok('渲染进程未使用 Node API（故无需 nodeIntegration）',
 section('[B] 日期逻辑（固定 now = 2026-09-14 12:00）');
 
 const grabFn = (name) => jsSrc.match(new RegExp('function ' + name + '\\([\\s\\S]*?\\n}'))?.[0];
-const dateCode = ['parseLocalDate', 'calcAge', 'calcEndDate', 'splitDuration'].map(grabFn);
+const dateCode = ['parseLocalDate', 'calcAge', 'calcEndDate', 'odoSplitDuration'].map(grabFn);
 ok('日期工具函数可整块抽出', dateCode.every(Boolean));
-const D = new Function(dateCode.join('\n') + '\nreturn { parseLocalDate, calcAge, calcEndDate, splitDuration };')();
+const D = new Function(dateCode.join('\n') + '\nreturn { parseLocalDate, calcAge, calcEndDate, odoSplitDuration };')();
 const NOW = new Date(2026, 8, 14, 12, 0, 0);   // 2026-09-14 12:00 本地
 
 ok('生日已过 → 年龄不递减', D.calcAge(D.parseLocalDate('2004-03-15'), NOW) === 22);
@@ -71,12 +76,12 @@ ok('生日当天 → 算已满', D.calcAge(D.parseLocalDate('2004-09-14'), NOW) 
   ok('出生日期解析为本地 00:00', b.getHours() === 0 && b.getMinutes() === 0);
   ok('终点落在本地 00:00（UTC 偏移已修）', end.getHours() === 0 && end.getMinutes() === 0,
     `${end.getFullYear()}-${end.getMonth() + 1}-${end.getDate()}`);
-  const d = D.splitDuration(end - NOW);
+  const d = D.odoSplitDuration(end - NOW);
   const expectH = (24 - NOW.getHours()) % 24;
   ok('剩余时分秒无 8 小时残留', d.hours === expectH && d.minutes === 0,
     `${d.days}天 ${d.hours}时${d.minutes}分`);
 }
-ok('过期返回全 0', (() => { const z = D.splitDuration(-1); return !z.days && !z.hours && !z.minutes && !z.seconds; })());
+ok('过期返回全 0', (() => { const z = D.odoSplitDuration(-1); return !z.days && !z.hours && !z.minutes && !z.seconds; })());
 
 // ============================================================
 // [C] 心跳线

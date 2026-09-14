@@ -1,12 +1,13 @@
 {
   "name": "life-countdown",
   "version": "1.0.0",
-  "description": "人生倒计时 —— 太空舱风格桌面应用，心跳线是笔尖描记式心电图",
+  "description": "人生倒计时 —— 太空舱风格桌面应用；读秒是滚轮里程表，心跳线是笔尖描记式心电图",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
     "build": "electron-builder",
-    "verify": "node scripts/verify.mjs",
+    "verify": "node scripts/verify.mjs && node scripts/verify-odometer.mjs",
+    "verify:dom": "electron scripts/verify-countdown-dom.js",
     "figure": "node scripts/gen-ecg-svg.mjs",
     "shot": "electron scripts/screenshot.js"
   },
@@ -16,6 +17,7 @@
     "electron",
     "ecg",
     "heartbeat",
+    "odometer",
     "canvas"
   ],
   "author": "alphaaaaa001",

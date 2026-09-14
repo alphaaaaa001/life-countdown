@@ -286,23 +286,72 @@ body {
   margin-top: 5px;
 }
 
-/* 读秒：全页最大的一行数字 —— 数字大、单位小，形成落差 */
-.stat-value-group {
-  font-size: 1.1em;                      /* 单位（天/时/分/秒）的字号 */
-  font-weight: 600;
-  color: var(--text-tertiary);
+/* 读秒：全页最大的一行 —— 时/分/秒 逐位竖向滚轮，天为静态数字
+   视觉语言借自 CodePen「CSS-Only Countdown Clock」，驱动换成了 JS（见 script.js） */
+.odo-row {
+  --digit-want: 80px;                             /* 数字字号（定稿值） */
+  --digit-size: min(var(--digit-want), 8.2vw);    /* 窄窗口自动收紧，不让行被挤换行。
+                                                     系数由实测反推：整行宽 ≈ 9.14 × 字号，
+                                                     故字号 ≤ 可用宽 / 9.14；取 8.2vw 后
+                                                     窗口 ≥ 976px 时正好吃满 80px */
+  --cell: 1.25em;                                 /* 一格的步进高度；
+                                                     em 按【使用处的字号】解析：
+                                                     .reel 里 = 1.25 × 滚轮字号 */
+  --reel-dur: 600ms;
+  --reel-ease: cubic-bezier(0.22, 0.61, 0.36, 1); /* 平滑 */
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: center;
   margin-top: 16px;
-  line-height: 1.1;
+  line-height: 1;
+  color: var(--primary-color);
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;             /* 等宽数字：翻牌时行宽不抖 */
 }
 
-.stat-value-group span {
-  font-size: 3.8em;                      /* 数字字号 —— 视觉主体 */
-  font-weight: 800;
-  color: var(--primary-color);
-  font-variant-numeric: tabular-nums;    /* 等宽数字：跳秒时宽度不抖 */
+/* 天数：静态数字（一天才动一次，滚它没意义还吵） */
+.odo-num {
+  font-size: var(--digit-size);
+  height: var(--cell);
+  line-height: var(--cell);
+  letter-spacing: 0.01em;
+}
+
+/* 一位数字 = 一个竖向滚轮 */
+.reel {
+  display: block;
+  font-size: var(--digit-size);
+  width: 0.64em;
+  height: var(--cell);
+  overflow: hidden;
+  text-align: center;
+  /* 上下沿淡出，避免相邻数字露头 */
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 14%, #000 86%, transparent 100%);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 14%, #000 86%, transparent 100%);
+}
+
+.reel-track {
+  display: block;
+  transition: transform var(--reel-dur) var(--reel-ease);
+  will-change: transform;
+}
+
+.reel-track > i {
+  display: block;
+  height: var(--cell);
+  line-height: var(--cell);
+  font-style: normal;
+}
+
+/* 单位：天/时/分/秒，跟着数字缩放并压小，形成落差 */
+.odo-unit {
+  font-size: calc(var(--digit-size) * 0.29);
+  font-weight: 600;
+  color: var(--text-tertiary);
   line-height: 1;
-  display: inline-block;
-  margin: 0 4px 0 10px;
+  margin: 0 0.42em 0 0.62em;
+  padding-bottom: 0.58em;      /* 把单位提到数字基线附近 */
 }
 
 /* 进度条 */
@@ -433,18 +482,26 @@ body {
   }
 }
 
-/* 窄窗口降级：读秒数字别把卡片撑破（按文字实测宽度分档） */
+/* 窄窗口降级：滚轮是固定格宽，塞不下整行会换行 —— 按窗口宽度分档收紧字号 */
 @media (max-width: 880px) {
   .container { padding: 28px; }
   .stat-card.large { padding: 28px 20px 26px; }
-  .stat-value-group span { font-size: 2.8em; }
   .stat-value { font-size: 1.8em; }
+}
+
+/* 滚轮的收紧密度单独提前一档：它只关心「整行放不放得下」，
+   跟容器内边距何时切换（620px）不该绑在一起 */
+@media (max-width: 680px) {
+  .odo-row { --digit-size: min(var(--digit-want), 7.4vw); }
 }
 
 @media (max-width: 620px) {
   .container { padding: 20px; }
-  .stat-value-group span { font-size: 1.9em; margin: 0 3px 0 6px; }
   .stat-value { font-size: 1.5em; }
+}
+
+@media (max-width: 520px) {
+  .odo-row { --digit-size: min(var(--digit-want), 6.9vw); }
 }
 
 /* 滚动条样式 */

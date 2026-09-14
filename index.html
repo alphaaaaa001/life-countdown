@@ -55,12 +55,8 @@
         
         <div class="stat-card large">
           <div class="stat-label">剩余生命倒计时</div>
-          <div class="stat-value-group">
-            <span id="daysToEnd">0</span> 天
-            <span id="hoursToEnd">0</span> 时
-            <span id="minutesToEnd">0</span> 分
-            <span id="secondsToEnd">0</span> 秒
-          </div>
+          <!-- 读秒行由 script.js 的 buildOdoRow() 生成：天为静态数字，时/分/秒 逐位滚轮 -->
+          <div class="odo-row" id="odoRow"></div>
         </div>
       </div>
 
