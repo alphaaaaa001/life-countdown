@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>ECG 心跳线预览 — life-countdown</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; }
+  body {
+    background: #080b10;
+    font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+    transition: background .3s ease;
+  }
+  body.light { background: #f4f6f9; }
+  canvas { display: block; position: fixed; inset: 0; }
+
+  .panel {
+    position: fixed; top: 20px; left: 20px; z-index: 10;
+    padding: 16px 18px; border-radius: 14px;
+    background: rgba(18, 24, 34, .72);
+    border: 1px solid rgba(255, 255, 255, .10);
+    backdrop-filter: blur(12px);
+    color: #c9d4e3; font-size: 12.5px; line-height: 1.75;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, .45);
+    min-width: 250px;
+  }
+  body.light .panel {
+    background: rgba(255, 255, 255, .82);
+    border-color: rgba(0, 0, 0, .10);
+    color: #33415c;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, .12);
+  }
+  .panel h3 {
+    font-size: 13px; font-weight: 600; letter-spacing: .4px;
+    margin-bottom: 10px; color: #7fd4ff;
+  }
+  body.light .panel h3 { color: #0a84c4; }
+  .row { display: flex; justify-content: space-between; gap: 14px; }
+  .row b { font-weight: 600; color: #eaf2ff; font-variant-numeric: tabular-nums; }
+  body.light .row b { color: #12192b; }
+  .btns { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+  button {
+    flex: 1; min-width: 62px; padding: 7px 10px; cursor: pointer;
+    border-radius: 8px; font-size: 12px; font-family: inherit;
+    border: 1px solid rgba(255, 255, 255, .16);
+    background: rgba(255, 255, 255, .06); color: #c9d4e3;
+    transition: all .18s ease;
+  }
+  button:hover { background: rgba(127, 212, 255, .18); border-color: #7fd4ff; color: #fff; }
+  button.on { background: rgba(127, 212, 255, .28); border-color: #7fd4ff; color: #fff; }
+  body.light button { border-color: rgba(0,0,0,.14); background: rgba(0,0,0,.04); color: #33415c; }
+  body.light button:hover { background: rgba(10,132,196,.14); border-color: #0a84c4; color: #0a84c4; }
+  body.light button.on { background: rgba(10,132,196,.2); border-color: #0a84c4; color: #0a84c4; }
+  .hint { margin-top: 10px; font-size: 11px; opacity: .58; line-height: 1.6; }
+  .hr { height: 1px; background: rgba(255,255,255,.09); margin: 9px 0; }
+  body.light .hr { background: rgba(0,0,0,.09); }
+</style>
+</head>
+<body>
+<canvas id="heartbeatCanvas"></canvas>
+
+<div class="panel">
+  <h3>ECG 心跳线参数（笔尖描记式）</h3>
+  <div class="row"><span>心搏周期</span><b id="vPeriod">—</b></div>
+  <div class="row"><span>等效心率</span><b id="vBpm">—</b></div>
+  <div class="row"><span>墨迹漂移</span><b id="vSpeed">—</b></div>
+  <div class="row"><span>R 峰高度</span><b id="vAmpl">—</b></div>
+  <div class="hr"></div>
+  <div class="row"><span>笔尖位置</span><b id="vPen">—</b></div>
+  <div class="row"><span>已印下心搏</span><b id="vCount">—</b></div>
+  <div class="row"><span>实测心搏间隔</span><b id="vGap">—</b></div>
+  <div class="row"><span>已运行</span><b id="vElapsed">—</b></div>
+  <div class="btns">
+    <button id="bSlower">更慢</button>
+    <button id="bReset">复位周期</button>
+    <button id="bFaster">更快</button>
+  </div>
+  <div class="btns">
+    <button id="bRestart">清空重来</button>
+    <button id="bTheme">切换主题</button>
+  </div>
+  <div class="btns">
+    <button id="bBeat">手动"咚"一下</button>
+  </div>
+  <div class="hint">
+    点画面任意处 = 当场"咚"一下<br>
+    预览逻辑与 script.js 的纯函数块逐字一致（改动请两边同步）
+  </div>
+</div>
+
+<script>
+// ============================================================
+// 以下常量与纯函数必须与 script.js 的 ECG_PURE_MATH 块保持一致
+// ============================================================
+const ECG_BEAT_W     = 300;
+// 注意：ECG_SCROLL / ECG_PERIOD_S 在正式版是 const；预览页要试不同节奏故用 let，
+// 改周期时两个一起更新并清空重来（否则旧墨迹会被拉伸、节拍也不会变）。
+let ECG_PERIOD_MS  = 1900;
+let ECG_PERIOD_S   = ECG_PERIOD_MS / 1000;
+let ECG_SCROLL     = (ECG_BEAT_W / ECG_PERIOD_MS) * 1000;
+const ECG_AMPL       = 78;
+const ECG_PEN_FRAC   = 0.5;
+const ECG_FIRST_BEAT = 0.55;
+const ECG_MAX_BEATS  = 64;
+const ECG_PULSE_MS   = 620;
+
+const ECG_POINTS = [
+  [0.000,  0.00],
+  [0.020,  0.00],
+  [0.048,  0.10],   // P
+  [0.078,  0.00],   // PR 段
+  [0.130,  0.00],
+  [0.152, -0.12],   // Q
+  [0.172,  1.00],   // R ← "咚"
+  [0.194, -0.40],   // S
+  [0.226,  0.00],
+  [0.268,  0.00],   // ST 段
+  [0.312,  0.26],   // T
+  [0.368,  0.00],
+  [0.420,  0.08],   // U
+  [0.452,  0.00],
+  [1.000,  0.00]
+];
+
+function ecgPhaseValue(u) {
+  if (u <= 0 || u >= 1) return 0;
+  for (let i = 0; i < ECG_POINTS.length - 1; i++) {
+    const u0 = ECG_POINTS[i][0], v0 = ECG_POINTS[i][1];
+    const u1 = ECG_POINTS[i + 1][0], v1 = ECG_POINTS[i + 1][1];
+    if (u >= u0 && u <= u1) {
+      const t = (u - u0) / (u1 - u0 || 1);
+      return v0 + (v1 - v0) * t;
+    }
+  }
+  return 0;
+}
+
+function latestBeatAtOrBefore(beats, t) {
+  for (let i = beats.length - 1; i >= 0; i--) {
+    if (beats[i] <= t) return beats[i];
+  }
+  return null;
+}
+
+function ecgAmplAtScreenX(x, penX, elapsed, beats) {
+  if (x > penX) return 0;
+  const age = (penX - x) / ECG_SCROLL;
+  const drawnAt = elapsed - age;
+  if (drawnAt < 0) return 0;
+  const emit = latestBeatAtOrBefore(beats, drawnAt);
+  if (emit === null) return 0;
+  return ecgPhaseValue((drawnAt - emit) / ECG_PERIOD_S);
+}
+
+function ecgAmplAtPen(elapsed, beats) {
+  const emit = latestBeatAtOrBefore(beats, elapsed);
+  if (emit === null) return 0;
+  const u = (elapsed - emit) / ECG_PERIOD_S;
+  return u >= 1 ? 0 : ecgPhaseValue(u);
+}
+// ============================================================
+
+let hbCanvas, hbCtx, hbRafId = null;
+let hbStart = null;
+let hbBeats = [], hbNextBeat = ECG_FIRST_BEAT, hbPulses = [];
+
+function resize() {
+  hbCanvas.width = window.innerWidth;
+  hbCanvas.height = window.innerHeight;
+}
+
+function triggerBeat() {
+  if (hbStart === null) return;
+  const elapsed = (performance.now() - hbStart) / 1000;
+  const last = hbBeats.length ? hbBeats[hbBeats.length - 1] : -Infinity;
+  if (elapsed - last < 0.35) return;
+  hbBeats.push(elapsed);
+  hbPulses.push(elapsed);
+  hbNextBeat = elapsed + ECG_PERIOD_S;
+}
+
+function heartbeatFrame(ts) {
+  const ctx = hbCtx;
+  const width = hbCanvas.width, height = hbCanvas.height;
+  const centerY = height / 2;
+  const penX = Math.round(width * ECG_PEN_FRAC);
+
+  if (hbStart === null) hbStart = ts;
+  const elapsed = (ts - hbStart) / 1000;
+
+  while (hbNextBeat <= elapsed) {
+    hbBeats.push(hbNextBeat);
+    hbPulses.push(hbNextBeat);
+    hbNextBeat += ECG_PERIOD_S;
+  }
+  if (hbBeats.length > ECG_MAX_BEATS) hbBeats.splice(0, hbBeats.length - ECG_MAX_BEATS);
+  if (hbPulses.length > 8) hbPulses.splice(0, hbPulses.length - 8);
+
+  const isLight = document.body.classList.contains('light');
+  const baseColor  = isLight ? 'rgba(0,0,0,0.12)'  : 'rgba(255,255,255,0.12)';
+  const lineColor  = isLight ? 'rgba(0,0,0,0.55)'  : 'rgba(255,255,255,0.55)';
+  const fadedColor = isLight ? 'rgba(0,0,0,0.10)'  : 'rgba(255,255,255,0.10)';
+  const glowColor  = isLight ? 'rgba(0,0,0,0.28)'  : 'rgba(255,255,255,0.28)';
+
+  ctx.clearRect(0, 0, width, height);
+
+  // 基线
+  ctx.strokeStyle = baseColor; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(0, centerY); ctx.lineTo(width, centerY); ctx.stroke();
+
+  // 已描出的墨迹
+  const xStart = Math.max(0, penX - elapsed * ECG_SCROLL);
+  if (penX - xStart >= 1) {
+    let stroke = lineColor;
+    if (penX - xStart > 2) {
+      const grad = ctx.createLinearGradient(penX, 0, xStart, 0);
+      grad.addColorStop(0, lineColor);
+      grad.addColorStop(1, fadedColor);
+      stroke = grad;
+    }
+    ctx.strokeStyle = stroke; ctx.lineWidth = 2; ctx.lineJoin = 'round';
+    ctx.beginPath();
+    for (let x = xStart; x <= penX; x++) {
+      const y = centerY - ECG_AMPL * ecgAmplAtScreenX(x, penX, elapsed, hbBeats);
+      if (x === xStart) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  }
+
+  // 笔尖
+  const penY = centerY - ECG_AMPL * ecgAmplAtPen(elapsed, hbBeats);
+  const glow = ctx.createRadialGradient(penX, penY, 0, penX, penY, 18);
+  glow.addColorStop(0, glowColor); glow.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = glow;
+  ctx.beginPath(); ctx.arc(penX, penY, 18, 0, Math.PI * 2); ctx.fill();
+
+  ctx.fillStyle = lineColor;
+  ctx.beginPath(); ctx.arc(penX, penY, 3.5, 0, Math.PI * 2); ctx.fill();
+
+  // 脉冲圈
+  for (const p of hbPulses) {
+    const age = elapsed - p;
+    if (age < 0 || age * 1000 > ECG_PULSE_MS) continue;
+    const k = (age * 1000) / ECG_PULSE_MS;
+    ctx.strokeStyle = isLight
+      ? `rgba(0,0,0,${((1 - k) * 0.30).toFixed(3)})`
+      : `rgba(255,255,255,${((1 - k) * 0.30).toFixed(3)})`;
+    ctx.lineWidth = 1.6 * (1 - k) + 0.4;
+    ctx.beginPath(); ctx.arc(penX, penY, 6 + k * 34, 0, Math.PI * 2); ctx.stroke();
+  }
+
+  // 面板读数
+  document.getElementById('vPen').textContent    = penX + ' px (' + (ECG_PEN_FRAC * 100) + '%)';
+  document.getElementById('vCount').textContent  = hbBeats.length + ' 拍';
+  document.getElementById('vElapsed').textContent = elapsed.toFixed(1) + ' s';
+  if (hbBeats.length >= 2) {
+    const gap = hbBeats[hbBeats.length - 1] - hbBeats[hbBeats.length - 2];
+    document.getElementById('vGap').textContent = gap.toFixed(3) + ' s';
+  }
+
+  hbRafId = requestAnimationFrame(heartbeatFrame);
+}
+
+function refreshPanel() {
+  document.getElementById('vPeriod').textContent = ECG_PERIOD_MS + ' ms';
+  document.getElementById('vBpm').textContent    = (60000 / ECG_PERIOD_MS).toFixed(1) + ' bpm';
+  document.getElementById('vSpeed').textContent  = ECG_SCROLL.toFixed(1) + ' px/s';
+  document.getElementById('vAmpl').textContent   = ECG_AMPL + ' px';
+}
+
+window.addEventListener('DOMContentLoaded', () => {
+  hbCanvas = document.getElementById('heartbeatCanvas');
+  hbCtx = hbCanvas.getContext('2d');
+  resize();
+  window.addEventListener('resize', resize);
+  refreshPanel();
+  hbRafId = requestAnimationFrame(heartbeatFrame);
+
+  window.addEventListener('pointerdown', (e) => {
+    const tag = ((e.target && e.target.tagName) || '').toLowerCase();
+    if (tag === 'input' || tag === 'button' || tag === 'a' || tag === 'select') return;
+    triggerBeat();
+  });
+
+  function setPeriod(p) {
+    ECG_PERIOD_MS = Math.max(500, Math.min(4000, p));
+    ECG_PERIOD_S  = ECG_PERIOD_MS / 1000;
+    ECG_SCROLL    = (ECG_BEAT_W / ECG_PERIOD_MS) * 1000;
+    refreshPanel();
+    restart();          // 清空重来，干净地看新节奏
+  }
+
+  function restart() {
+    hbStart = null; hbBeats = []; hbPulses = []; hbNextBeat = ECG_FIRST_BEAT;
+    document.getElementById('vGap').textContent = '—';
+  }
+
+  document.getElementById('bSlower').onclick = () => setPeriod(ECG_PERIOD_MS + 300);
+  document.getElementById('bFaster').onclick = () => setPeriod(ECG_PERIOD_MS - 300);
+  document.getElementById('bReset').onclick  = () => setPeriod(1900);
+  document.getElementById('bRestart').onclick = restart;
+  document.getElementById('bTheme').onclick = () => document.body.classList.toggle('light');
+  document.getElementById('bBeat').onclick = () => triggerBeat();
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,32 @@
+{
+  "name": "life-countdown",
+  "version": "1.0.0",
+  "description": "人生倒计时 —— 太空舱风格桌面应用，心跳线是笔尖描记式心电图",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder",
+    "figure": "node scripts/gen-ecg-svg.mjs"
+  },
+  "keywords": [
+    "countdown",
+    "life",
+    "electron",
+    "ecg",
+    "heartbeat",
+    "canvas"
+  ],
+  "author": "alphaaaaa001",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^28.0.0",
+    "electron-builder": "^24.9.1"
+  },
+  "build": {
+    "appId": "com.lifecountdown.app",
+    "win": {
+      "target": "nsis",
+      "icon": "icon.ico"
+    }
+  }
+}

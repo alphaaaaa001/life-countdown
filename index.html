@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>人生倒计时</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- 心跳线背景 -->
+  <canvas id="heartbeatCanvas"></canvas>
+  
+  <!-- 主题切换按钮 -->
+  <button class="theme-toggle" id="themeToggle" onclick="toggleTheme()">
+    <span class="theme-icon">🌙</span>
+  </button>
+  
+  <div class="container">
+    <div class="header">
+      <h1>🚀 人生倒计时</h1>
+      <div class="subtitle">LIFE COUNTDOWN SYSTEM</div>
+    </div>
+
+    <div class="input-section" id="inputSection">
+      <div class="panel">
+        <div class="panel-header">初始化系统</div>
+        <div class="form-group">
+          <label>出生日期</label>
+          <input type="date" id="birthDate" placeholder="选择出生日期">
+        </div>
+        
+        <div class="form-group">
+          <label>预计寿命</label>
+          <input type="number" id="expectedAge" placeholder="例如: 80" min="1" max="150">
+          <span class="unit">岁</span>
+        </div>
+        
+        <button class="btn-start" onclick="startCountdown()">启动倒计时</button>
+      </div>
+    </div>
+
+    <div class="countdown-section hidden" id="countdownSection">
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-label">已度过</div>
+          <div class="stat-value" id="passedYears">0</div>
+          <div class="stat-unit">年</div>
+        </div>
+        
+        <div class="stat-card">
+          <div class="stat-label">剩余</div>
+          <div class="stat-value" id="remainingYears">0</div>
+          <div class="stat-unit">年</div>
+        </div>
+        
+        <div class="stat-card large">
+          <div class="stat-label">剩余生命倒计时</div>
+          <div class="stat-value-group">
+            <span id="daysToEnd">0</span> 天
+            <span id="hoursToEnd">0</span> 时
+            <span id="minutesToEnd">0</span> 分
+            <span id="secondsToEnd">0</span> 秒
+          </div>
+        </div>
+      </div>
+
+      <div class="progress-section">
+        <div class="progress-label">
+          <span>人生进度</span>
+          <span id="progressPercent">0%</span>
+        </div>
+        <div class="progress-bar">
+          <div class="progress-fill" id="progressFill"></div>
+        </div>
+      </div>
+
+      <div class="warning-section" id="warningSection">
+        <!-- 健康警告将动态插入这里 -->
+      </div>
+
+      <button class="btn-reset" onclick="resetApp()">重新设置</button>
+    </div>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>
