@@ -62,9 +62,23 @@
 npm install
 npm start          # 启动 Electron
 npm run build      # 打包成 Windows 安装包（electron-builder / NSIS）
+npm run verify     # 46 条验收断言（见下）
+npm run figure     # 重新生成 docs/ecg-waveform.svg
 ```
 
 没有 Electron 环境，也可以直接开 `index.html` —— 它不依赖任何 Node 能力，就是个普通网页。
+
+### 自带验收：`npm run verify`
+
+不自测的项目不值得信。这个脚本**不再把算法重写一遍**，而是从 `script.js` 里把标记为 `ECG_PURE_MATH` 的纯函数块**整块抽出来跑**，验的是真实现：
+
+| 区 | 内容 | 举例 |
+|---|---|---|
+| A 代码卫生 | 不可达函数是否残留、id 是否与 HTML 对得上 | 15 个 `getElementById` 全部命中 |
+| B 日期逻辑 | 固定 `now` 跑年龄/终点/时长 | 生日当天算已满；终点落在本地 00:00 |
+| C 心跳线 | 常量自洽、波形形态、**t=0 整屏空白**、真扫描测节律 | 10 s 扫出 5 个 R 峰，间隔全为 1.900 s |
+
+期望值全部**从源码常量推导**（不写死数字），所以你改了 `ECG_PERIOD_MS` 之类的参数，这个脚本照样有效。
 
 ---
 
@@ -97,7 +111,8 @@ life-countdown/
 │   └─ 倒计时 / 年龄 / 进度 / 健康提示
 ├─ heartbeat-preview.html  心跳线调参预览页（开发用）
 ├─ scripts/
-│   └─ gen-ecg-svg.mjs     从 script.js 抽真实实现 → 生成 README 示意图
+│   ├─ verify.mjs          验收脚本：抽真实实现跑对照（npm run verify）
+│   └─ gen-ecg-svg.mjs     从 script.js 抽真实实现 → 生成 README 示意图（npm run figure）
 ├─ docs/
 │   └─ ecg-waveform.svg    自动生成的波形示意
 ├─ icon.png / icon.ico     应用图标

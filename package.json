@@ -6,6 +6,7 @@
   "scripts": {
     "start": "electron .",
     "build": "electron-builder",
+    "verify": "node scripts/verify.mjs",
     "figure": "node scripts/gen-ecg-svg.mjs"
   },
   "keywords": [
