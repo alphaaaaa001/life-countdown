@@ -11,7 +11,7 @@
 ![Platform](https://img.shields.io/badge/Platform-Windows-0078D6?logo=windows&logoColor=white)
 ![Dependencies](https://img.shields.io/badge/runtime%20deps-0-brightgreen)
 
-![心跳线示意](docs/ecg-waveform.svg)
+<img src="docs/screenshot.png" alt="界面截图（暗色主题）" width="820">
 
 </div>
 
@@ -43,6 +43,8 @@
 
 > 图里的 `docs/ecg-waveform.svg` 不是手画的，是 `npm run figure` 跑的 —— 脚本会从 `script.js` 里**把同一份纯函数整块抽出来**逐像素算，所以参数一改图就跟着变，不会和代码对不上。
 
+![波形示意](docs/ecg-waveform.svg)
+
 ---
 
 ## 功能
@@ -64,6 +66,7 @@ npm start          # 启动 Electron
 npm run build      # 打包成 Windows 安装包（electron-builder / NSIS）
 npm run verify     # 46 条验收断言（见下）
 npm run figure     # 重新生成 docs/ecg-waveform.svg
+npm run shot       # 重新生成 docs/screenshot*.png，并打印读秒行版式体检（需图形界面）
 ```
 
 没有 Electron 环境，也可以直接开 `index.html` —— 它不依赖任何 Node 能力，就是个普通网页。
@@ -112,9 +115,11 @@ life-countdown/
 ├─ heartbeat-preview.html  心跳线调参预览页（开发用）
 ├─ scripts/
 │   ├─ verify.mjs          验收脚本：抽真实实现跑对照（npm run verify）
-│   └─ gen-ecg-svg.mjs     从 script.js 抽真实实现 → 生成 README 示意图（npm run figure）
+│   ├─ gen-ecg-svg.mjs     从 script.js 抽真实实现 → 生成 README 示意图（npm run figure）
+│   └─ screenshot.js       起 Electron 截图 + 读秒行版式体检（npm run shot）
 ├─ docs/
-│   └─ ecg-waveform.svg    自动生成的波形示意
+│   ├─ ecg-waveform.svg    自动生成的波形示意
+│   └─ screenshot*.png     自动生成的界面截图（暗/亮）
 ├─ icon.png / icon.ico     应用图标
 └─ package.json
 ```
@@ -153,6 +158,17 @@ if (monthDiff < 0 || (monthDiff === 0 && dayDiff < 0)) age--;
 **5. 纯函数区和 DOM 区分开**
 
 `script.js` 里有一段用 `// >>> ECG_PURE_MATH_BEGIN` 标记的纯函数区，不引用任何 DOM。好处是测试脚本和图生成脚本可以**把这一段整块抽出来跑**，验的是真实现而不是记忆里的实现。
+
+**6. 截图脚本踩过的两个坑**
+
+写 `scripts/screenshot.js` 时撞上两个不查文档根本想不到的行为，都写进注释了：
+
+- **窗口 `show: false` 时，CSS transition 的动画时间线是冻结的。** 表现极具迷惑性：切换主题后 `getComputedStyle` 始终返回过渡的**起始值**，`capturePage()` 也拿到旧帧 —— 看起来就像样式没生效。但没写 `transition` 的属性（比如文字颜色）是秒切的，于是页面呈现出「背景切了、卡片没切」的诡异半成品状态。解法是截图前注入 `* { transition: none !important; animation: none !important; }`，让每张图都是终态、可复现。
+- **环境里若带 `ELECTRON_RUN_AS_NODE=1`，electron 会退化成纯 Node**，症状是 `require('electron').app` 为 `undefined`，报 `Cannot read properties of undefined`。跑之前要 `unset` 掉。
+
+**7. 数字用 `tabular-nums`，跳秒时行宽不抖**
+
+等宽数字（`font-variant-numeric: tabular-nums`）让 `11111` 与 `88888` 同宽，否则每秒变化时整行会左右轻微跳动。`npm run shot` 会顺带断言这一点（实测差值 0 px）。
 
 ---
 

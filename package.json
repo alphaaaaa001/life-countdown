@@ -7,7 +7,8 @@
     "start": "electron .",
     "build": "electron-builder",
     "verify": "node scripts/verify.mjs",
-    "figure": "node scripts/gen-ecg-svg.mjs"
+    "figure": "node scripts/gen-ecg-svg.mjs",
+    "shot": "electron scripts/screenshot.js"
   },
   "keywords": [
     "countdown",

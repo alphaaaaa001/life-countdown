@@ -97,8 +97,8 @@ body {
 }
 
 .container {
-  width: 850px;
-  max-width: 90%;
+  width: 980px;
+  max-width: 92%;
   margin: 0 auto;
   padding: 40px;
   position: relative;
@@ -251,8 +251,13 @@ body {
   box-shadow: 0 8px 25px var(--shadow-color);
 }
 
+/* 读秒卡：视觉主角，给更足的呼吸感和一点向内的聚光 */
 .stat-card.large {
   grid-column: 1 / -1;
+  padding: 34px 25px 30px;
+  background:
+    radial-gradient(120% 160% at 50% 0%, rgba(74, 158, 255, 0.10) 0%, rgba(74, 158, 255, 0) 65%),
+    var(--panel-bg);
 }
 
 .stat-label {
@@ -263,14 +268,16 @@ body {
   text-transform: uppercase;
 }
 
+/* 年份卡：配角，收小体量，把版面让给读秒 */
 .stat-value {
-  font-size: 3em;
-  font-weight: bold;
+  font-size: 2em;
+  font-weight: 700;
   background: linear-gradient(135deg, var(--primary-color) 0%, var(--primary-light) 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
   line-height: 1.2;
+  font-variant-numeric: tabular-nums;
 }
 
 .stat-unit {
@@ -279,15 +286,23 @@ body {
   margin-top: 5px;
 }
 
+/* 读秒：全页最大的一行数字 —— 数字大、单位小，形成落差 */
 .stat-value-group {
-  font-size: 1.4em;
-  font-weight: bold;
-  color: var(--primary-color);
-  margin-top: 10px;
+  font-size: 1.1em;                      /* 单位（天/时/分/秒）的字号 */
+  font-weight: 600;
+  color: var(--text-tertiary);
+  margin-top: 16px;
+  line-height: 1.1;
 }
 
 .stat-value-group span {
-  margin: 0 8px;
+  font-size: 3.8em;                      /* 数字字号 —— 视觉主体 */
+  font-weight: 800;
+  color: var(--primary-color);
+  font-variant-numeric: tabular-nums;    /* 等宽数字：跳秒时宽度不抖 */
+  line-height: 1;
+  display: inline-block;
+  margin: 0 4px 0 10px;
 }
 
 /* 进度条 */
@@ -416,6 +431,20 @@ body {
     opacity: 1;
     transform: translateY(0);
   }
+}
+
+/* 窄窗口降级：读秒数字别把卡片撑破（按文字实测宽度分档） */
+@media (max-width: 880px) {
+  .container { padding: 28px; }
+  .stat-card.large { padding: 28px 20px 26px; }
+  .stat-value-group span { font-size: 2.8em; }
+  .stat-value { font-size: 1.8em; }
+}
+
+@media (max-width: 620px) {
+  .container { padding: 20px; }
+  .stat-value-group span { font-size: 1.9em; margin: 0 3px 0 6px; }
+  .stat-value { font-size: 1.5em; }
 }
 
 /* 滚动条样式 */
