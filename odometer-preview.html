@@ -87,7 +87,10 @@ body {
 /* ---- 滚轮读秒行 ---- */
 .odo-row {
   --digit-want: 80px;                             /* 滑块设的「想要多大」 */
-  --digit-size: var(--digit-want);                /* 实际生效（窄窗口会被压） */
+  --digit-size: min(var(--digit-want), 8.1vw);    /* 实际生效：窄窗口连续压，与正式版同一条曲线。
+                                                     系数比正式版的 8.2vw 小一点 ——
+                                                     本页卡片比正式版窄约 8px，是实测反推的
+                                                     （8.2 时 881px 只剩 1px 余量，刀尖上站着） */
   --cell: 1.25em;                                 /* 一格的步进高度 */
   --reel-dur: 600ms;
   --reel-ease: cubic-bezier(0.22, 0.61, 0.36, 1);
