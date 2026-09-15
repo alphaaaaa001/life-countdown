@@ -71,9 +71,10 @@ npm run shot       # 重新生成 docs/screenshot.png + 读秒行 17 档版式�
 npm run shot:odo   # 滚轮预览页：逐根滚轮核对 + 重新生成 docs/odometer-rolling.png
 ```
 
-> 后三条都要起 Electron，统一走 `scripts/electron-run.mjs` 这层垫片 ——
-> 它会先擦掉 `ELECTRON_RUN_AS_NODE`（那个变量会让 electron 退化成纯 Node，
-> 报 `require('electron').app is undefined`），省得你换台机器就踩。
+> `npm start` 和最后三条都要起 Electron，统一走 `scripts/electron-run.mjs` 这层垫片 ——
+> 它会先擦掉 `ELECTRON_RUN_AS_NODE`（那个变量会让 electron 退化成纯 Node：
+> 你打 `electron -v` 会得到 Node 的版本号，而应用报
+> `require('electron').app is undefined`），省得你换台机器就踩。
 
 没有 Electron 环境，也可以直接开 `index.html` —— 它不依赖任何 Node 能力，就是个普通网页。
 
