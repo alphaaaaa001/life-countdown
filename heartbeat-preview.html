@@ -84,13 +84,16 @@
   </div>
   <div class="hint">
     点画面任意处 = 当场"咚"一下<br>
-    预览逻辑与 script.js 的纯函数块逐字一致（改动请两边同步）
+    纯函数块从 script.js 原样粘贴，逐字一致由断言守着
   </div>
 </div>
 
 <script>
 // ============================================================
-// 以下常量与纯函数必须与 script.js 的 ECG_PURE_MATH 块保持一致
+// 下面的常量与 script.js 顶部同名常量保持一致；
+// 中间的「纯函数块」是从 script.js 的 ECG_PURE_MATH 哨兵块【原样粘】过来的。
+// 两边是否逐字一致，由 `npm run verify` 里的一条断言守着 ——
+// 所以别再手改这里：要调就改 script.js，然后把那一块整块搬过来。
 // ============================================================
 const ECG_BEAT_W     = 300;
 // 注意：ECG_SCROLL / ECG_PERIOD_S 在正式版是 const；预览页要试不同节奏故用 let，
@@ -104,24 +107,27 @@ const ECG_FIRST_BEAT = 0.55;
 const ECG_MAX_BEATS  = 64;
 const ECG_PULSE_MS   = 620;
 
+// >>> ECG_PURE_MATH_BEGIN  此块为纯函数、不引用 DOM —— 供离线对照测试整块抽取
+// 单次心搏波形控制点：[相位 0~1, 振幅系数]，正=向上，基线为 0
 const ECG_POINTS = [
   [0.000,  0.00],
   [0.020,  0.00],
-  [0.048,  0.10],   // P
-  [0.078,  0.00],   // PR 段
+  [0.048,  0.10],   // P   小丘（心房除极）
+  [0.078,  0.00],   // PR 段  回到基线
   [0.130,  0.00],
-  [0.152, -0.12],   // Q
-  [0.172,  1.00],   // R ← "咚"
-  [0.194, -0.40],   // S
-  [0.226,  0.00],
+  [0.152, -0.12],   // Q   小下陷
+  [0.172,  1.00],   // R   最高尖峰 ← "咚"
+  [0.194, -0.40],   // S   深谷
+  [0.226,  0.00],   // 回到基线
   [0.268,  0.00],   // ST 段
-  [0.312,  0.26],   // T
+  [0.312,  0.26],   // T   小丘（心室复极）
   [0.368,  0.00],
-  [0.420,  0.08],   // U
+  [0.420,  0.08],   // U   小丘
   [0.452,  0.00],
-  [1.000,  0.00]
+  [1.000,  0.00]    // 静息，等下一拍
 ];
 
+// 相位 u(0~1) → 振幅系数（约 -0.40 ~ 1.00），线性插值保证尖峰锐利
 function ecgPhaseValue(u) {
   if (u <= 0 || u >= 1) return 0;
   for (let i = 0; i < ECG_POINTS.length - 1; i++) {
@@ -135,6 +141,7 @@ function ecgPhaseValue(u) {
   return 0;
 }
 
+// 取出 beats 中不晚于 t 的最近一次心搏时刻；没有则返回 null
 function latestBeatAtOrBefore(beats, t) {
   for (let i = beats.length - 1; i >= 0; i--) {
     if (beats[i] <= t) return beats[i];
@@ -142,22 +149,25 @@ function latestBeatAtOrBefore(beats, t) {
   return null;
 }
 
+// 屏幕上 x 处此刻的振幅系数（延迟线模型：笔尖画下的墨迹随时间向左漂移）
 function ecgAmplAtScreenX(x, penX, elapsed, beats) {
-  if (x > penX) return 0;
-  const age = (penX - x) / ECG_SCROLL;
-  const drawnAt = elapsed - age;
-  if (drawnAt < 0) return 0;
+  if (x > penX) return 0;                       // 笔尖还没描到这里 → 空白
+  const age = (penX - x) / ECG_SCROLL;          // 该处墨迹已存在多久(秒)
+  const drawnAt = elapsed - age;                // 该处被描出的时刻(秒)
+  if (drawnAt < 0) return 0;                    // 还没描到 → 空白
   const emit = latestBeatAtOrBefore(beats, drawnAt);
-  if (emit === null) return 0;
+  if (emit === null) return 0;                  // 那时还没心跳 → 平线
   return ecgPhaseValue((drawnAt - emit) / ECG_PERIOD_S);
 }
 
+// 笔尖此刻的振幅系数（即当下这一拍的形态）
 function ecgAmplAtPen(elapsed, beats) {
   const emit = latestBeatAtOrBefore(beats, elapsed);
   if (emit === null) return 0;
   const u = (elapsed - emit) / ECG_PERIOD_S;
   return u >= 1 ? 0 : ecgPhaseValue(u);
 }
+// <<< ECG_PURE_MATH_END
 // ============================================================
 
 let hbCanvas, hbCtx, hbRafId = null;

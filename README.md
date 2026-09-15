@@ -64,11 +64,16 @@
 npm install
 npm start          # 启动 Electron
 npm run build      # 打包成 Windows 安装包（electron-builder / NSIS）
-npm run verify     # 97 条离线验收断言（心跳线 50 + 滚轮读秒 47，见下）
+npm run verify     # 107 条离线验收断言（心跳线 53 + 滚轮读秒 54，见下）
 npm run verify:dom # 15 条真渲染核对：在 Electron 里逐拍比对滚轮显示的数字（会短暂弹窗）
 npm run figure     # 重新生成 docs/ecg-waveform.svg
-npm run shot       # 重新生成 docs/screenshot*.png，并打印读秒行版式体检（需图形界面）
+npm run shot       # 重新生成 docs/screenshot.png + 读秒行 17 档版式体检（需图形界面）
+npm run shot:odo   # 滚轮预览页：逐根滚轮核对 + 重新生成 docs/odometer-rolling.png
 ```
+
+> 后三条都要起 Electron，统一走 `scripts/electron-run.mjs` 这层垫片 ——
+> 它会先擦掉 `ELECTRON_RUN_AS_NODE`（那个变量会让 electron 退化成纯 Node，
+> 报 `require('electron').app is undefined`），省得你换台机器就踩。
 
 没有 Electron 环境，也可以直接开 `index.html` —— 它不依赖任何 Node 能力，就是个普通网页。
 
@@ -81,10 +86,13 @@ npm run shot       # 重新生成 docs/screenshot*.png，并打印读秒行版�
 | A 代码卫生 | 不可达函数是否残留、id 是否与 HTML 对得上 | 12 个 `getElementById` 全部命中 |
 | B 日期逻辑 | 固定 `now` 跑年龄/终点/时长 | 生日当天算已满；终点落在本地 00:00 |
 | C 心跳线 | 常量自洽、波形形态、**t=0 整屏空白**、真扫描测节律 | 10 s 扫出 5 个 R 峰，间隔全为 1.900 s |
+| D 预览页一致性 | 心跳纯函数块是否与 `heartbeat-preview.html` 逐字一致 | 一旦漂移就报红，沙盒读数不再可信 |
 
 期望值全部**从源码常量推导**（不写死数字），所以你改了 `ECG_PERIOD_MS` 之类的参数，这个脚本照样有效。
 
-`scripts/verify-odometer.mjs`（另 47 条）专验滚轮读秒的纯函数：从 `script.js` 抽同一块 `ODO_PURE_MATH`，模拟从「1 天 02:03:04」逐秒倒着走完 **93,784 秒**，断言 6 根滚轮**每一位显示的永远是真实数字**、每次步进恰好 1 格（含十位回绕），并核对 `odometer-preview.html` 里那份拷贝与正式版**逐字一致**。
+`scripts/verify-odometer.mjs`（另 54 条）专验滚轮读秒的纯函数：从 `script.js` 抽同一块 `ODO_PURE_MATH`，模拟从「1 天 02:03:04」逐秒倒着走完 **93,784 秒**，断言 6 根滚轮**每一位显示的永远是真实数字**、每次步进恰好 1 格（含十位回绕），并核对 `odometer-preview.html` 里那份拷贝与正式版**逐字一致**。
+
+其中一组专盯「大跳落位」的判定：早先写的是 `delta >= cycle`（想表达"一次跳了整圈以上就别滚"），可 `odoReelDelta` 末尾带 `% cycle`，返回值天生被封在 `[0, cycle-1]` —— **那条分支从来没执行过**。现在改成按时间差判定（距上次喂值超过 3 s 就当作休眠唤醒 / 页面挂起，直接落位不滚），并加了穷举断言，把「旧门槛数学上不可达」这件事钉死，免得哪天又被改回去。
 
 ### 真渲染核对：`npm run verify:dom`
 
@@ -103,6 +111,10 @@ npm run shot       # 重新生成 docs/screenshot*.png，并打印读秒行版�
 视觉语言借自 CodePen 上的 *CSS-Only Countdown Clock*（kindofone / Yogev Ahuvia）：竖向滚轮长条 + 窄视窗裁切。但那套设计的**驱动是写死的** —— 每位数字的 `animation-duration` / `iteration-count` 在页面加载那一刻就定死（1 小时 = 分钟十位 `3600s × 1`、秒个位 `10s × 360`），所以它没法对准真实时钟、没法设成任意时长、也没有归零。
 
 这里只搬它的**视觉**，驱动换成 JS：滚轮永远由真实读数喂，所以屏幕上的数字任何时候都是对的。
+
+<img src="docs/odometer-rolling.png" alt="读秒滚轮滚到一半的样子" width="820">
+
+> 上图截的是滚轮**滚到一半**的那一瞬间：相邻两个数字各露一半 —— 这正是"机械里程表"和"直接换字"的区别。图由 `npm run shot:odo` 生成（它会先把过渡冻住、再手动把秒的两根滚带各推半格，所以可复现）。
 
 | | 那套设计 | 这里 |
 |---|---|---|
@@ -160,16 +172,17 @@ life-countdown/
 ├─ heartbeat-preview.html  心跳线调参预览页（开发用）
 ├─ odometer-preview.html   滚轮读秒调参预览页（开发用）
 ├─ scripts/
-│   ├─ verify.mjs          验心跳线 / 日期 / 代码卫生（npm run verify）
+│   ├─ verify.mjs          验心跳线 / 日期 / 代码卫生 / 预览页一致性（npm run verify）
 │   ├─ verify-odometer.mjs 验滚轮读秒纯函数：93,784 秒长跑仿真（npm run verify）
 │   ├─ verify-countdown-dom.js  真渲染核对：逐拍比对滚轮显示的数字（npm run verify:dom）
+│   ├─ electron-run.mjs    起 Electron 的垫片：先擦掉 ELECTRON_RUN_AS_NODE 再启动
 │   ├─ gen-ecg-svg.mjs     从 script.js 抽真实实现 → 生成 README 示意图（npm run figure）
-│   ├─ screenshot.js       起 Electron 截图 + 读秒行版式体检（npm run shot）
-│   └─ shot-odometer.js    滚轮预览页的截图 + 逐根滚轮核对（开发用）
+│   ├─ screenshot.js       起 Electron 截图 + 读秒行 17 档版式体检（npm run shot）
+│   └─ shot-odometer.js    滚轮预览页：逐根滚轮核对 + 「滚到一半」截图（npm run shot:odo）
 ├─ docs/
 │   ├─ ecg-waveform.svg    自动生成的波形示意
-│   ├─ screenshot*.png     自动生成的界面截图（暗/亮）
-│   └─ odometer-*.png      滚轮预览页截图（静止 / 滚动中 / 亮色）
+│   ├─ screenshot.png      自动生成的界面截图（暗色）
+│   └─ odometer-rolling.png 读秒滚轮「滚到一半」的截图
 ├─ icon.png / icon.ico     应用图标
 └─ package.json
 ```
@@ -212,7 +225,12 @@ if (monthDiff < 0 || (monthDiff === 0 && dayDiff < 0)) age--;
 - `// >>> ECG_PURE_MATH_BEGIN` —— 心跳线
 - `// >>> ODO_PURE_MATH_BEGIN` —— 滚轮读秒
 
-好处是测试脚本和图生成脚本可以**把这两段整块抽出来跑**，验的是真实现而不是记忆里的实现。代价是必须用脚本搬而不是手抄，否则两份拷贝会悄悄漂移 —— 所以 `verify-odometer.mjs` 里专门有一条断言：核对预览页那份拷贝与正式版**逐字一致**。
+好处是测试脚本和图生成脚本可以**把这两段整块抽出来跑**，验的是真实现而不是记忆里的实现。代价是必须用脚本搬而不是手抄，否则两份拷贝会悄悄漂移 —— 所以两边各有一条「逐字一致」断言守着：
+
+- `verify-odometer.mjs`：核对 `odometer-preview.html` 那份 `ODO_PURE_MATH` 与正式版逐字一致；
+- `verify.mjs` 的 `[D]` 段：核对 `heartbeat-preview.html` 那份 `ECG_PURE_MATH` 与正式版逐字一致。
+
+（心跳预览页原先是在提示里写着"与 script.js 逐字一致"，但它其实是一份**手抄**的副本、没有任何机制保证 —— 话是对的纯属运气好。现在两个预览页都是"整块粘过来 + 断言守着"，那句话才算数。）
 
 **6. 隐藏窗口（`show: false`）里，一整类东西是不动的**
 
@@ -243,11 +261,37 @@ if (monthDiff < 0 || (monthDiff === 0 && dayDiff < 0)) age--;
 | 「滚动时长 600ms」量出来是 `0s` | 「禁过渡」那段样式插在了读取之前 —— 自己把要量的东西改掉了 |
 | 「每秒步进都是 1 格」报 3600 次例外 | 把「天进位的 7 格」也算进去了。判据要按位分别写，不能笼统 |
 | 「所有滚轮都错位」 | 核对时拿字符串和数字直接 `===`，6 根全误报 |
+| 「首帧读数是真值」 | 拿 `row.textContent` 当显示值 —— 它把**整条滚带**的文字全拼进去了。量"屏幕上显示什么"必须按**停格**读（从 `transform` 的 `m42` 反推格索引） |
+| 「17 档窗宽全部不溢出」 | 见下面第 9 条：有些档其实是在**上一个宽度**上量的 |
 
 以及两条相邻的教训：
 
 - **`Range.getClientRects().length` 不能当行数**、**块的 `getBoundingClientRect().width` 不能当文字宽**（块会撑满父容器）。量文字宽要克隆一份加 `white-space: nowrap` 的探针。
 - **逐像素采样必然错过连续极值**（量到 94.5 去对 94.0）—— 容差要按"一像素内的斜率"给，别当成 bug 去改代码。
+
+**9. 量尺寸之前，先确认尺寸真的变了**
+
+版式体检的做法是「把窗口调成 N 档宽度、每档量一次」。但有些环境会**静默忽略** `setContentSize` ——
+无窗口管理器的沙箱、远程桌面、某些 CI 都会。后果特别阴：你以为在量 660 px，其实视口还停在 760 px，
+**读数看起来完全正常，只是量错了对象**。
+
+实测（同一台机器连续请求）：
+
+| 请求内容宽 | 实测 `window.innerWidth` |
+|---|---|
+| 1280 / 1100 | 1280 / **1280** |
+| 1000 / 900 / 860 | 1000 / **1000** / **1000** |
+| 760 / 660 / 560 | 760 / **760** / **760** |
+
+于是 `npm run shot` 的「17 档全部通过」一开始只有 7 档是真量到的，另外 10 档在重复量同一宽度 ——
+**一条永远为真的断言，比没有断言更危险**。
+
+修法两层：① 每次改完尺寸先读一次 `window.innerWidth` 自检，对不上就**重试**（重试后 17 档全部真量到）；
+② 实在调不动的档标 `SKIP`、**不计入结论**，并且「一档都没量到」按不通过处理 ——
+`验不了 ≠ 通过`。`npm run shot:odo` 里也用了同一套。
+
+这份自检还有个副产品：它把预览页在 **900 px** 那档的真实溢出给照出来了（`need 731 / have 679`）——
+以前那 10 档假读数把这个坑盖住了。
 
 ---
 

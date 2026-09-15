@@ -353,6 +353,19 @@ function odoAdvance(offset, prevDigit, nextDigit, cycle) {
   return { offset: o + delta, delta, folded };
 }
 
+// 「一次大跳」的判定：距上次喂值超过 ODO_JUMP_MS 毫秒，就认为中间发生了
+// 休眠唤醒 / 改了设置 / 页面被挂起 —— 这时别把攒下的十几格慢慢滚出来
+// （那会像电风扇），直接落位到目标格。
+//
+// 门槛为什么取「正常节拍的 3 倍」：正常一拍是 1000ms，机器偶尔卡顿会让
+// 某一拍迟到，取 3 倍就不会把这种正常抖动误判成大跳。
+const ODO_JUMP_MS = 3000;
+// 间隔拿不到（首次喂值 / 时钟异常）时也按大跳处理 ——
+// 直接落位总比滚成电风扇稳，而且首帧本来就不该有动画。
+function odoIsBigJump(gapMs) {
+  return !Number.isFinite(gapMs) || gapMs > ODO_JUMP_MS;
+}
+
 // 浏览器一帧。滚动动画结束后，必须至少留出一帧让数字"落格"，
 // 否则它永远停在两格之间、读出来就是相邻的另一个数字。
 const ODO_FRAME_MS = 1000 / 60;
@@ -427,7 +440,7 @@ function makeReel(group, idx) {
     track.appendChild(cell);
   }
   reel.appendChild(track);
-  return { reel, track, group, idx, cycle, offset: 0, digit: 0, ready: false };
+  return { reel, track, group, idx, cycle, offset: 0, digit: 0, ready: false, lastFeedAt: 0 };
 }
 
 function makeUnit(text) {
@@ -486,6 +499,10 @@ function pinReel(r, offset) {
 
 // 喂一个新数字
 function feedReel(r, digit, animate) {
+  const now = performance.now();
+  const gapMs = r.lastFeedAt ? now - r.lastFeedAt : null;
+  r.lastFeedAt = now;
+
   if (!r.ready) {                            // 首次：直接落位，不滚
     r.digit = digit;
     r.offset = odoOffsetForDigit(digit, r.cycle);
@@ -505,8 +522,8 @@ function feedReel(r, digit, animate) {
   if (step.delta === 0) return;
   r.digit = digit;
 
-  // 数值一次跳了整圈以上（休眠唤醒、改了数据）→ 直接落位，别滚成电风扇
-  if (step.delta >= r.cycle) {
+  // 距上次喂值太久 → 中间大概率休眠/挂起了，攒下的格数直接落位，别滚成电风扇
+  if (odoIsBigJump(gapMs)) {
     r.offset = odoOffsetForDigit(digit, r.cycle);
     pinReel(r, r.offset);
     return;

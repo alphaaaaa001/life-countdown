@@ -23,7 +23,8 @@ if (!block) { console.error('未找到 ODO_PURE_MATH 哨兵块'); process.exit(1
 // 真本体：整块抽出来 eval，不重写
 const M = new Function(block[1] + `
   return { odoSplitDuration, odoDigitsOf, odoCycleFor, odoCellDigit,
-           odoOffsetForDigit, odoReelDelta, odoAdvance, odoEffectiveDur, ODO_FRAME_MS };
+           odoOffsetForDigit, odoReelDelta, odoAdvance, odoEffectiveDur, ODO_FRAME_MS,
+           odoIsBigJump, ODO_JUMP_MS };
 `)();
 
 let pass = 0, fail = 0;
@@ -53,7 +54,8 @@ function feed(st, digit, animate = true) {
   const step = M.odoAdvance(st.offset, st.digit, digit, st.cycle);
   if (step.delta === 0) return;
   st.digit = digit;
-  if (step.delta >= st.cycle) { st.offset = M.odoOffsetForDigit(digit, st.cycle); return; }
+  // 注意：本复刻「每拍都喂」，间隔恒等于节拍 → 永远走不到「大跳落位」（那条按时间差判），
+  // 所以这里不建模时间；时间差判定由 [7] 单独验。
   if (step.folded) st.offset = st.offset % st.cycle;
   st.offset = step.offset;
   st.max = Math.max(st.max, st.offset);
@@ -197,19 +199,37 @@ console.log('\n[6] 整行仿真：从 1 天 02:03:04 倒着走到底，6 个滚�
 }
 
 // ---------------------------------------------------------------
-console.log('\n[7] 大跳变（休眠唤醒 / 改数据）不应滚成电风扇');
+console.log('\n[7] 「大跳落位」由时间差判定（休眠唤醒 / 改了设置）');
 {
+  // 旧判定写成 `delta >= cycle`，但 odoReelDelta 末尾有 `% cycle`，
+  // 返回值天生被封在 [0, cycle-1] —— 那条分支从来没执行过。先用穷举钉死这一点。
+  const maxDelta = (c) => Math.max(...[...Array(c).keys()]
+    .flatMap(p => [...Array(c).keys()].map(n => M.odoReelDelta(p, n, c))));
+  ok('旧门槛数学上不可达：delta 的峰值只有 cycle − 1',
+    [3, 6, 10].every(c => maxDelta(c) === c - 1),
+    [3, 6, 10].map(c => `cycle=${c}→max ${maxDelta(c)}`).join('  '));
+
+  // 新判定：看「距上次喂值过了多久」
+  ok('正常节拍（1000ms 的 1 倍）不算大跳', M.odoIsBigJump(1000) === false);
+  ok('机器卡顿到 2999ms 仍不算大跳', M.odoIsBigJump(2999) === false);
+  ok('越过门槛（3001ms）判为大跳 → 直接落位', M.odoIsBigJump(3001) === true);
+  ok('休眠一小时后回来 → 大跳', M.odoIsBigJump(3600 * 1000) === true);
+  ok('间隔拿不到（NaN / undefined）→ 按大跳处理，首帧不滚',
+    M.odoIsBigJump(NaN) === true && M.odoIsBigJump(undefined) === true);
+  ok('门槛本身：3000ms 不触发、3001ms 触发（边界是「大于」而非「大于等于」）',
+    M.odoIsBigJump(M.ODO_JUMP_MS) === false && M.odoIsBigJump(M.ODO_JUMP_MS + 1) === true,
+    `ODO_JUMP_MS = ${M.ODO_JUMP_MS}`);
+
   const st = newReel(10);
   feed(st, 9);                 // 起始 9
-  let posBefore = st.offset;
+  const posBefore = st.offset;
   feed(st, 2);                 // 一次跳 7 格
-  // delta = 7 < cycle=10 → 会滚 7 格；但那不是"整圈以上"，属正常范围
-  ok('跳 7 格仍在合法范围（< 圈长）', st.offset === posBefore + 7, `offset ${posBefore} → ${st.offset}`);
+  ok('纯数学上跳 7 格仍在合法范围（时间差判定不在纯函数层，故照滚）',
+    st.offset === posBefore + 7, `offset ${posBefore} → ${st.offset}`);
 
   const st2 = newReel(10);
   feed(st2, 9);
-  const stepBig = M.odoAdvance(st2.offset, 9, 9, 10);
-  ok('数字不变时不产生步进', stepBig.delta === 0);
+  ok('数字不变时不产生步进', M.odoAdvance(st2.offset, 9, 9, 10).delta === 0);
 }
 
 // ---------------------------------------------------------------

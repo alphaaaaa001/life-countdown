@@ -3,10 +3,11 @@
  *
  *   node scripts/verify.mjs     （或 npm run verify）
  *
- * 覆盖三块：
+ * 覆盖四块：
  *   [A] 代码卫生：死代码残留、化石 id、getElementById 与 HTML 的交叉核对
  *   [B] 日期逻辑：固定 now 跑 parseLocalDate / calcAge / calcEndDate / odoSplitDuration
  *   [C] 心跳线：常量自洽、波形形态、t=0 整屏空白、真扫描测节律、漂移、留痕模型
+ *   [D] 预览页 ↔ 正式版：心跳纯函数块是否逐字一致（防两份拷贝静默漂移）
  *
  * 所有期望值都从源码常量推导，不写死数字 —— 改参数后这个脚本仍然有效。
  */
@@ -193,6 +194,31 @@ ok('全程无 NaN', (() => { for (let u = 0; u <= 1; u += 0.001) if (!Number.isF
   }
   ok('未来心搏不影响既有画面（墨迹是留痕的）', same === total, `${same}/${total}`);
 }
+
+// ============================================================
+// [D] 预览页 ↔ 正式版：纯函数块逐字一致
+// ============================================================
+section('[D] 预览页 ↔ 正式版一致性');
+
+// 取哨兵块「BEGIN 那一行之后」到「END 标记之前」的正文
+const blockOf = (src, name) => {
+  const b = src.indexOf('// >>> ' + name + '_BEGIN');
+  const e = src.indexOf('// <<< ' + name + '_END');
+  if (b < 0 || e < 0 || e < b) return null;
+  return src.slice(src.indexOf('\n', b) + 1, e);
+};
+
+const HB_PREVIEW = read('heartbeat-preview.html');
+const hbSrcBlk = blockOf(jsSrc, 'ECG_PURE_MATH');
+const hbPrevBlk = blockOf(HB_PREVIEW, 'ECG_PURE_MATH');
+ok('心跳哨兵块两边都在：正式版 script.js + heartbeat-preview.html', !!hbSrcBlk && !!hbPrevBlk,
+  hbSrcBlk && hbPrevBlk ? `${hbSrcBlk.split('\n').length} 行` : '缺一侧');
+ok('心跳纯函数块：正式版 ↔ 心跳预览页 逐字一致',
+  !!hbSrcBlk && hbSrcBlk === hbPrevBlk,
+  hbSrcBlk === hbPrevBlk ? '' : '两边已漂移，预览页的读数不再可信！');
+ok('心跳预览页不再自己手写一份 ECG_POINTS（必须来自同一块）',
+  (HB_PREVIEW.match(/const ECG_POINTS\s*=\s*\[/g) || []).length === 1,
+  `出现 ${(HB_PREVIEW.match(/const ECG_POINTS\s*=\s*\[/g) || []).length} 次`);
 
 console.log(`\n\x1b[1m===== ${pass} 通过 / ${fail} 失败 =====\x1b[0m\n`);
 process.exit(fail ? 1 : 0);

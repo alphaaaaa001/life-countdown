@@ -6,7 +6,6 @@
 
 /* CSS 变量 - 暗黑模式（默认） */
 :root {
-  --bg-color: #0a0e1a;
   --bg-gradient: linear-gradient(135deg, #0a0e1a 0%, #1a1f35 50%, #0a0e1a 100%);
   --text-color: #e0e6ed;
   --text-secondary: #6b7b95;
@@ -20,13 +19,14 @@
   --primary-light: #7ec8ff;
   --warning-color: #ffa04a;
   --warning-border: rgba(255, 160, 74, 0.4);
+  /* 心跳线颜色 —— 预留：当前 canvas 里的颜色是硬编码的（Canvas 2D 读不到 CSS 变量），
+     想自己 DIY 心跳线配色时，从这里改、再把 heartbeatFrame 里的取值换成读它即可。 */
   --heartbeat-color: #ffffff;
   --shadow-color: rgba(0, 0, 0, 0.5);
 }
 
 /* 亮色模式 */
 body.light-mode {
-  --bg-color: #ffffff;
   --bg-gradient: linear-gradient(135deg, #f5f7fa 0%, #ffffff 50%, #f5f7fa 100%);
   --text-color: #1a202c;
   --text-secondary: #4a5568;

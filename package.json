@@ -7,9 +7,10 @@
     "start": "electron .",
     "build": "electron-builder",
     "verify": "node scripts/verify.mjs && node scripts/verify-odometer.mjs",
-    "verify:dom": "electron scripts/verify-countdown-dom.js",
+    "verify:dom": "node scripts/electron-run.mjs scripts/verify-countdown-dom.js",
     "figure": "node scripts/gen-ecg-svg.mjs",
-    "shot": "electron scripts/screenshot.js"
+    "shot": "node scripts/electron-run.mjs scripts/screenshot.js",
+    "shot:odo": "node scripts/electron-run.mjs scripts/shot-odometer.js"
   },
   "keywords": [
     "countdown",
