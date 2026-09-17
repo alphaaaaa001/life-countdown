@@ -24,7 +24,8 @@ if (!block) { console.error('未找到 ODO_PURE_MATH 哨兵块'); process.exit(1
 const M = new Function(block[1] + `
   return { odoSplitDuration, odoDigitsOf, odoCycleFor, odoCellDigit,
            odoOffsetForDigit, odoReelDelta, odoAdvance, odoEffectiveDur, ODO_FRAME_MS,
-           odoIsBigJump, ODO_JUMP_MS };
+           odoIsBigJump, ODO_JUMP_MS,
+           odoSplitYearSpan, odoYearEnd, odoMaxDigitAt, ODO_FIELD_MAX };
 `)();
 
 let pass = 0, fail = 0;
@@ -318,9 +319,16 @@ console.log('\n[10] 一致性自检');
   ok('滚带圈数与仿真一致（ODO_REEL_CYCLES = 2）', /const ODO_REEL_CYCLES = 2;/.test(src));
 
   // 驱动方式：必须挂在真实读数上，而不是"页面加载即启动的固定时长动画"
-  ok('每拍都由 updateCountdown 喂真实读数', /odoFeedParts\(odoSplitDuration/.test(src));
-  ok('时/分/秒 三位都参与滚动（含十位与个位共 6 根滚轮）',
-    /hours:\s+odoDigitsOf/.test(src) && /minutes:\s+odoDigitsOf/.test(src) && /seconds:\s+odoDigitsOf/.test(src));
+  // （2026-09-17 改成多行注册表后，喂值入口从 odoFeedParts 换成 odoFeedRow）
+  ok('每拍都由 updateCountdown 喂真实读数（生命行 + 年份行）',
+    /odoFeedRow\('life', lifeParts\)/.test(src) &&
+    /odoFeedRow\('life2', lifeParts\)/.test(src) &&
+    /odoFeedRow\('year', odoSplitYearSpan\(odoYearEnd\(now\) - now\)\)/.test(src));
+  ok('时/分/秒 都参与滚动：每行按 digits 逐位建滚轮（生命行 2+2+2 = 6 根）',
+    /key: 'hours',\s+cycleKey: 'hours',\s+digits: 2/.test(src) &&
+    /key: 'minutes',\s+cycleKey: 'minutes',\s+digits: 2/.test(src) &&
+    /key: 'seconds',\s+cycleKey: 'seconds',\s+digits: 2/.test(src) &&
+    /for \(let idx = f\.digits - 1; idx >= 0; idx--\)/.test(src));
 
   // 正式版节拍 1000ms、滚动 600ms → 永不触顶（CSS 里的 600ms 只是 JS 启动前的兜底）
   ok('正式版节拍永不触顶：600ms 远小于 1000ms − 一帧',
@@ -335,6 +343,75 @@ console.log('\n[10] 一致性自检');
     /--reel-ease:\s*cubic-bezier\(0\.22, 0\.61, 0\.36, 1\)/.test(css));
   ok('窄窗口有字号收紧（min(…, vw)），不会把整行挤换行',
     /--digit-size:\s*min\(var\(--digit-want\)/.test(css));
+}
+
+console.log('\n[11] 年份倒计时行：小时是【总小时数】(0..8784)，不是 0-23');
+{
+  // 终点 = 次年 1/1 00:00（本地时区）。用固定日期构造，结论与时区无关。
+  const end = M.odoYearEnd(new Date(2026, 5, 15, 12, 0, 0));
+  ok('终点 = 次年 1/1 00:00 本地时间',
+    end.getFullYear() === 2027 && end.getMonth() === 0 && end.getDate() === 1 &&
+    end.getHours() === 0 && end.getMinutes() === 0 && end.getSeconds() === 0);
+
+  const leapStart = new Date(2028, 0, 1, 0, 0, 1);          // 2028 是闰年
+  const lp = M.odoSplitYearSpan(M.odoYearEnd(leapStart) - leapStart);
+  ok('闰年开局 = 8783 时 59 分 59 秒（四位数的上界）',
+    lp.hours === 8783 && lp.minutes === 59 && lp.seconds === 59,
+    `${lp.hours} 时 ${lp.minutes} 分 ${lp.seconds} 秒`);
+
+  // 圈长：小时 4 位 ⇒ 千位只有 0-8（9 格），其余各位 0-9（10 格）
+  const yc = [3, 2, 1, 0].map(i => M.odoCycleFor('yearHours', i));
+  ok('年份行小时四位的圈长 = [千9 · 百10 · 十10 · 个10]',
+    JSON.stringify(yc) === '[9,10,10,10]', yc.join('/'));
+
+  // 泛化后的圈长必须复现「原来写死的三个值」——这是本次重构的安全绳
+  ok('泛化圈长复现旧值：个位10 · 时十位3 · 分十位6 · 秒十位6',
+    M.odoCycleFor('hours', 0) === 10 && M.odoCycleFor('hours', 1) === 3 &&
+    M.odoCycleFor('minutes', 0) === 10 && M.odoCycleFor('minutes', 1) === 6 &&
+    M.odoCycleFor('seconds', 1) === 6);
+
+  // 真走一段：从「1001:00:00」倒着走到 1001 小时之前，稳跨 千位 1→0
+  const target = new Date(2028, 0, 1, 0, 0, 0);
+  const start = new Date(target.getTime() - 1001 * 3600000);
+  const sim = [
+    { idxs: [3, 2, 1, 0], reels: [3, 2, 1, 0].map(i => newReel(M.odoCycleFor('yearHours', i))), key: 'hours' },
+    { idxs: [1, 0], reels: [1, 0].map(i => newReel(M.odoCycleFor('minutes', i))), key: 'minutes' },
+    { idxs: [1, 0], reels: [1, 0].map(i => newReel(M.odoCycleFor('seconds', i))), key: 'seconds' }
+  ];
+  const shown = (st) => M.odoCellDigit(st.offset, st.cycle);   // 从停格反推显示的数字
+  let mismatch = 0, maxDelta = 0;
+  const STEPS = 3 * 3600 + 5;
+  for (let s = 0; s <= STEPS; s++) {
+    const now = new Date(start.getTime() + s * 1000);
+    const p = M.odoSplitYearSpan(target - now);
+    const digs = { hours: M.odoDigitsOf(p.hours, 4),
+                   minutes: M.odoDigitsOf(p.minutes, 2),
+                   seconds: M.odoDigitsOf(p.seconds, 2) };
+    for (const g of sim) {
+      const d = digs[g.key], n = d.length;
+      g.idxs.forEach((idx, k) => feed(g.reels[k], d[n - 1 - idx], true));
+      g.idxs.forEach((idx, k) => { if (shown(g.reels[k]) !== d[n - 1 - idx]) mismatch++; });
+      for (const st of g.reels) maxDelta = Math.max(maxDelta, ...st.deltas.slice(-1));
+    }
+  }
+  ok(`年份行 ${STEPS + 1} 拍 × 8 根滚轮：显示的数字全程等于真实值`, mismatch === 0,
+    `不一致 ${mismatch} 次`);
+  ok('年份行每次步进恰好 1 格（含千位 1→0、十位回绕）', maxDelta === 1,
+    `最大步进 ${maxDelta} 格`);
+  ok('秒个位每拍都在动（不是冻住的）',
+    sim[2].reels[1].steps >= STEPS - 2, `${sim[2].reels[1].steps} 次`);
+
+  // 跨年那一刻数值是突变的：时间差判据（odoIsBigJump）根本看不见它，
+  // 所以正式版必须显式落位 —— 这条用源码级断言钉住，别退回去只靠时间差。
+  const t0 = new Date(2027, 11, 31, 23, 59, 59);
+  const t1 = new Date(2028, 0, 1, 0, 0, 1);
+  const b = M.odoSplitYearSpan(M.odoYearEnd(t0) - t0);
+  const a = M.odoSplitYearSpan(M.odoYearEnd(t1) - t1);
+  ok('跨年那一刻数值确实突变（0 时 → 8783 时）', b.hours === 0 && a.hours === 8783,
+    `${b.hours} 时 → ${a.hours} 时`);
+  ok('正式版在跨年/改设置时【显式落位】，不指望时间差判据',
+    /year !== odoYearStamp\) odoSnapRow\('year'\)/.test(src) &&
+    /odoSnapAll\(\)/.test(src));
 }
 
 console.log(`\n合计 ${pass + fail} 条：${pass} PASS / ${fail} FAIL`);

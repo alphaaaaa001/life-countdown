@@ -42,8 +42,20 @@ function expectParts(nowMs) {
     seconds: Math.floor((left % 60000) / 1000)
   };
 }
-const expectDigitOf = (want, group, idx) =>
-  Number(String(want[group]).padStart(2, '0')[1 - idx]);
+// 年份行：终点 = 次年 1/1 本地时间。**小时是总小时数**（0..8784），不是 0-23。
+function expectYearParts(nowMs) {
+  const d = new Date(nowMs);
+  const left = new Date(d.getFullYear() + 1, 0, 1).getTime() - nowMs;
+  if (left <= 0) return { hours: 0, minutes: 0, seconds: 0 };
+  return {
+    hours: Math.floor(left / 3600000),
+    minutes: Math.floor((left % 3600000) / 60000),
+    seconds: Math.floor((left % 60000) / 1000)
+  };
+}
+// 某行某一位的期望数字：digits = 该字段补几位（生命行小时 2 位，年份行小时 4 位）
+const expectDigitOf = (want, key, idx, digits) =>
+  Number(String(want[key]).padStart(digits, '0')[digits - 1 - idx]);
 
 let pass = 0, fail = 0;
 const ok = (name, cond, detail = '') => {
@@ -51,23 +63,30 @@ const ok = (name, cond, detail = '') => {
   else { fail++; console.log(`  FAIL  ${name}${detail ? '  ' + detail : ''}`); }
 };
 
-// 渲染进程里的采样器：读出每根滚轮当前显示的数字
+// 渲染进程里的采样器：逐行读出每根滚轮当前显示的数字。
+// 2026-09-17 起读数层改成「多行注册表」（odoRows），且隐藏的那一行不采。
 const SAMPLER = (ms, step) => `
 new Promise(resolve => {
   const out = [];
   const t0 = performance.now();
+  const readRow = (name) => {
+    const rec = odoRows[name];
+    if (!rec || rec.el.classList.contains('hidden')) return null;
+    return {
+      days: rec.daysEl ? rec.daysEl.textContent : null,
+      reels: rec.reels.map(r => {
+        const ts = getComputedStyle(r.track).transform;
+        const cell = parseFloat(getComputedStyle(r.reel).fontSize) * 1.25;
+        const off = ts === 'none' ? 0 : -new DOMMatrixReadOnly(ts).m42 / cell;
+        const near = Math.round(off);
+        const idx = ((near % r.cycle) + r.cycle) % r.cycle;
+        return { row: name, key: r.key, idx: r.idx, digits: r.digits, cycle: r.cycle,
+                 settled: Math.abs(off - near) < 0.02, shown: odoCellDigit(idx, r.cycle) };
+      })
+    };
+  };
   const tick = () => {
-    const now = Date.now();
-    const rows = odoReels.map(r => {
-      const ts = getComputedStyle(r.track).transform;
-      const cell = parseFloat(getComputedStyle(r.reel).fontSize) * 1.25;
-      const off = ts === 'none' ? 0 : -new DOMMatrixReadOnly(ts).m42 / cell;
-      const near = Math.round(off);
-      const idx = ((near % r.cycle) + r.cycle) % r.cycle;
-      return { group: r.group, idx: r.idx, cycle: r.cycle,
-               settled: Math.abs(off - near) < 0.02, shown: odoCellDigit(idx, r.cycle) };
-    });
-    out.push({ t: now, days: odoDaysEl.textContent, reels: rows });
+    out.push({ t: Date.now(), life: readRow('life'), year: readRow('year'), life2: readRow('life2') });
     if (performance.now() - t0 < ${ms}) setTimeout(tick, ${step});
     else resolve(out);
   };
@@ -100,30 +119,52 @@ app.whenReady().then(async () => {
   console.log('[1] 接线层');
   const wiring = await win.webContents.executeJavaScript(`
     (() => {
-      const row = document.getElementById('odoRow');
-      const reels = [...row.querySelectorAll('.reel')];
-      const t0 = getComputedStyle(reels[0].querySelector('.reel-track'));
+      const info = (id) => {
+        const row = document.getElementById(id);
+        if (!row) return null;
+        const reels = [...row.querySelectorAll('.reel')];
+        const t0 = reels.length ? getComputedStyle(reels[0].querySelector('.reel-track')) : null;
+        return {
+          count: reels.length,
+          cycles: reels.map(r => r.querySelectorAll('.reel-track > i').length / 2),
+          hasDays: !!row.querySelector('.odo-num'),
+          hidden: row.classList.contains('hidden'),
+          dur: t0 ? t0.transitionDuration : '',
+          ease: t0 ? t0.transitionTimingFunction : '',
+          digitPx: reels.length ? getComputedStyle(reels[0]).fontSize : ''
+        };
+      };
       return {
-        reelCount: reels.length,
-        cycles: reels.map(r => r.querySelectorAll('.reel-track > i').length / 2),
-        hasDays: !!row.querySelector('.odo-num'),
-        dur: t0.transitionDuration,
-        ease: t0.transitionTimingFunction,
-        digitPx: getComputedStyle(row.querySelector('.odo-num')).fontSize,
+        life: info('odoRow'), year: info('odoRowYear'), life2: info('odoRowLife2'),
+        oyVisible: !document.getElementById('oySection').classList.contains('hidden'),
+        oyTitle: document.getElementById('oyTitle').textContent,
+        oyBtn: document.getElementById('oySwitch').textContent,
         sectionVisible: !document.getElementById('countdownSection').classList.contains('hidden')
       };
     })()
   `);
   ok('倒计时区块已显示', wiring.sectionVisible);
-  ok('6 根滚轮（时/分/秒 各两位）', wiring.reelCount === 6, `实得 ${wiring.reelCount}`);
-  ok('天数是静态数字节点', wiring.hasDays);
-  ok('圈长 = [3,10,6,10,6,10]（时十位 3 格、分/秒十位 6 格）',
-    JSON.stringify(wiring.cycles) === JSON.stringify([3, 10, 6, 10, 6, 10]),
-    JSON.stringify(wiring.cycles));
-  ok('滚动时长真的生效 600ms', wiring.dur === '0.6s', wiring.dur);
-  ok('缓动曲线真的生效（平滑）', /0\.22,\s*0\.61,\s*0\.36,\s*1/.test(wiring.ease), wiring.ease);
+  ok('心跳线下方的年份块已显示', wiring.oyVisible);
+  ok('生命行：6 根滚轮（时/分/秒 各两位）+ 静态天数',
+    wiring.life.count === 6 && wiring.life.hasDays, `实得 ${wiring.life.count} 根`);
+  ok('生命行圈长 = [3,10,6,10,6,10]（时十位 3 格、分/秒十位 6 格）',
+    JSON.stringify(wiring.life.cycles) === JSON.stringify([3, 10, 6, 10, 6, 10]),
+    JSON.stringify(wiring.life.cycles));
+  ok('年份行：8 根滚轮（小时是 4 位！）+ 没有静态天数',
+    wiring.year.count === 8 && !wiring.year.hasDays, `实得 ${wiring.year.count} 根`);
+  ok('年份行圈长 = [9,10,10,10,6,10,6,10]（千位只用到 0-8）',
+    JSON.stringify(wiring.year.cycles) === JSON.stringify([9, 10, 10, 10, 6, 10, 6, 10]),
+    JSON.stringify(wiring.year.cycles));
+  ok('默认显示年份行（生命副行收着）', !wiring.year.hidden && wiring.life2.hidden);
+  ok('标题/按钮文案跟着当前模式',
+    /今年结束/.test(wiring.oyTitle) && /剩余生命/.test(wiring.oyBtn),
+    `${wiring.oyTitle} | ${wiring.oyBtn}`);
+  ok('滚动时长真的生效 600ms', wiring.life.dur === '0.6s', wiring.life.dur);
+  ok('缓动曲线真的生效（平滑）', /0\.22,\s*0\.61,\s*0\.36,\s*1/.test(wiring.life.ease), wiring.life.ease);
   ok('数字字号 80px（窄窗口自适应钳制允许 ≤2% 收紧）',
-    parseFloat(wiring.digitPx) >= 78 && parseFloat(wiring.digitPx) <= 80.001, wiring.digitPx);
+    parseFloat(wiring.life.digitPx) >= 78 && parseFloat(wiring.life.digitPx) <= 80.001, wiring.life.digitPx);
+  ok('年份行字号与生命行一致（同一条 clamp 曲线）',
+    wiring.year.digitPx === wiring.life.digitPx, `${wiring.year.digitPx} vs ${wiring.life.digitPx}`);
 
   // ============================================================
   // [2] 禁过渡 → 状态瞬时。确定性地核对接线：每一拍的目标值都必须等于真值。
@@ -137,17 +178,28 @@ app.whenReady().then(async () => {
     for (const s of fixed) {
       const into = s.t % 1000;
       if (into < 120 || into > 960) continue;      // 整秒边界附近：这一拍可能还没落到
-      const want = expectParts(s.t);
-      if (String(want.days) !== s.days) bad.push(`${s.t}: 天 显示${s.days} 期望${want.days}`);
-      for (const r of s.reels) {
-        const exp = expectDigitOf(want, r.group, r.idx);
-        if (r.shown !== exp) bad.push(`${s.t}: ${r.group}${r.idx} 显示${r.shown} 期望${exp}`);
+      const wantLife = expectParts(s.t);
+      const wantYear = expectYearParts(s.t);
+      if (s.life) {
+        if (String(wantLife.days) !== s.life.days) {
+          bad.push(`${s.t}: 天 显示${s.life.days} 期望${wantLife.days}`);
+        }
+        for (const r of s.life.reels) {
+          const exp = expectDigitOf(wantLife, r.key, r.idx, r.digits);
+          if (r.shown !== exp) bad.push(`${s.t}: life.${r.key}${r.idx} 显示${r.shown} 期望${exp}`);
+        }
+      }
+      if (s.year) {
+        for (const r of s.year.reels) {
+          const exp = expectDigitOf(wantYear, r.key, r.idx, r.digits);
+          if (r.shown !== exp) bad.push(`${s.t}: year.${r.key}${r.idx} 显示${r.shown} 期望${exp}`);
+        }
       }
       checked++;
     }
     console.log(`  采样 ${fixed.length} 帧，其中 ${checked} 帧落在「该翻牌之后」`);
-    ok('接线正确：目标值 100% 等于真实读数', bad.length === 0,
-      bad.slice(0, 3).join(' | ') || `核对了 ${checked} 帧 × 6 根滚轮`);
+    ok('接线正确：生命行 + 年份行的目标值 100% 等于真实读数', bad.length === 0,
+      bad.slice(0, 3).join(' | ') || `核对了 ${checked} 帧 × 14 根滚轮`);
   }
 
   // ============================================================
@@ -160,33 +212,49 @@ app.whenReady().then(async () => {
   const live = await win.webContents.executeJavaScript(SAMPLER(6000, 25));
   {
     const stats = {};
-    for (const r of live[0].reels) stats[r.group + r.idx] = { settled: 0, rolling: 0, bad: [] };
+    const tag = (r) => r.row + '.' + r.key + r.idx;
+    for (const s of live) {
+      for (const name of ['life', 'year']) {
+        if (!s[name]) continue;
+        for (const r of s[name].reels) if (!stats[tag(r)]) stats[tag(r)] = { settled: 0, rolling: 0, bad: [] };
+      }
+    }
     let daysBad = [], checked = 0;
 
     for (const s of live) {
       const into = s.t % 1000;
       const nearBoundary = into < 35 || into > 965;
-      const want = expectParts(s.t);
-      if (String(want.days) !== s.days) daysBad.push(`${s.t}: 显示${s.days} 期望${want.days}`);
-      for (const r of s.reels) {
-        const st = stats[r.group + r.idx];
-        if (!r.settled) { st.rolling++; continue; }
-        st.settled++;
-        const exp = expectDigitOf(want, r.group, r.idx);
-        if (r.shown !== exp && !nearBoundary) st.bad.push(`${s.t}: 显示${r.shown} 期望${exp}`);
-        if (!nearBoundary) checked++;
+      const wantLife = expectParts(s.t);
+      const wantYear = expectYearParts(s.t);
+      const tasks = [];
+      if (s.life) {
+        if (String(wantLife.days) !== s.life.days) daysBad.push(`${s.t}: 显示${s.life.days} 期望${wantLife.days}`);
+        tasks.push([s.life.reels, wantLife]);
+      }
+      if (s.year) tasks.push([s.year.reels, wantYear]);
+
+      for (const [reels, want] of tasks) {
+        for (const r of reels) {
+          const st = stats[tag(r)];
+          if (!r.settled) { st.rolling++; continue; }
+          st.settled++;
+          const exp = expectDigitOf(want, r.key, r.idx, r.digits);
+          if (r.shown !== exp && !nearBoundary) st.bad.push(`${s.t}: 显示${r.shown} 期望${exp}`);
+          if (!nearBoundary) checked++;
+        }
       }
     }
 
     const allBad = Object.entries(stats).flatMap(([k, s]) => s.bad.map(b => k + ' ' + b));
-    const s0 = stats.seconds0;
-    const rollPct = 100 * s0.rolling / (s0.settled + s0.rolling);
+    const pct = (k) => { const s = stats[k]; return 100 * s.rolling / (s.settled + s.rolling); };
+    const rollPct = pct('year.seconds0');
     console.log(`  采样 ${live.length} 帧（${(live.length / 6).toFixed(0)} fps）` +
-      `，秒个位滚动占比 ${rollPct.toFixed(0)}%，累计核对 ${checked} 个停稳样本`);
+      `，年份行秒个位滚动占比 ${rollPct.toFixed(0)}%，累计核对 ${checked} 个停稳样本`);
 
     ok('动画态下停稳显示的数字 == 真实数字（0 次例外）', allBad.length === 0,
       allBad.slice(0, 3).join(' | '));
-    ok('秒个位确实在滚（动画没被冻住）', rollPct > 10, `${rollPct.toFixed(0)}%`);
+    ok('年份行秒个位确实在滚（动画没被冻住）', rollPct > 10, `${rollPct.toFixed(0)}%`);
+    ok('生命行秒个位也在滚', pct('life.seconds0') > 10, `${pct('life.seconds0').toFixed(0)}%`);
     ok('滚动停得下来（停稳占比 > 50%，说明 600ms 内跑完了一拍）',
       100 - rollPct > 50, `停稳 ${(100 - rollPct).toFixed(0)}%`);
     ok('天数始终正确', daysBad.length === 0, daysBad.slice(0, 2).join(' | '));
@@ -198,7 +266,8 @@ app.whenReady().then(async () => {
     const changes = [];
     let prev = null;
     for (const s of fixed) {
-      const sec = s.reels.find(r => r.group === 'seconds' && r.idx === 0).shown;
+      if (!s.life) continue;
+      const sec = s.life.reels.find(r => r.key === 'seconds' && r.idx === 0).shown;
       if (prev !== null && sec !== prev) changes.push(s.t);
       prev = sec;
     }
@@ -206,6 +275,54 @@ app.whenReady().then(async () => {
     ok('检出秒的翻牌（样本足够长）', changes.length >= 3, `${changes.length} 次`);
     ok('每次翻牌都贴着整秒边界（±120ms 内）', phases.every(p => p <= 120),
       `最大相位偏移 ${phases.length ? Math.max(...phases) : -1}ms`);
+  }
+
+  // ============================================================
+  // [5] 切换按钮：年份 ⇄ 剩余生命（赛博朋克 glitch 抖一下再换数）
+  console.log('\n[5] 切换按钮（年份 ⇄ 剩余生命）');
+  {
+    const snap = `(() => ({
+      glitching: document.getElementById('oySection').classList.contains('glitching'),
+      title: document.getElementById('oyTitle').textContent,
+      btn: document.getElementById('oySwitch').textContent,
+      yearHidden: document.getElementById('odoRowYear').classList.contains('hidden'),
+      life2Hidden: document.getElementById('odoRowLife2').classList.contains('hidden')
+    }))()`;
+
+    await win.webContents.executeJavaScript(`document.getElementById('oySwitch').click(); true`);
+    const mid = await win.webContents.executeJavaScript(snap);
+    ok('点下去立刻开始抖（glitching 类挂上）', mid.glitching);
+
+    await new Promise(r => setTimeout(r, 400));
+    const after = await win.webContents.executeJavaScript(snap);
+    ok('抖完自动摘掉 glitching 类（不会一直闪）', !after.glitching);
+    ok('已切到剩余生命：年份行收、副行出', after.yearHidden && !after.life2Hidden);
+    ok('标题与按钮文案跟着换',
+      /剩余生命/.test(after.title) && /今年剩余/.test(after.btn),
+      `${after.title} | ${after.btn}`);
+
+    // 切回去 —— 关键：**副行也一直在被喂值**，所以切过去的瞬间数字就该是对的，
+    // 不需要等一拍、也不会出现「从 12 时滚到 8700 时」那种电风扇。
+    await win.webContents.executeJavaScript(`document.getElementById('oySwitch').click(); true`);
+    await new Promise(r => setTimeout(r, 450));
+    const back = await win.webContents.executeJavaScript(SAMPLER(1400, 30));
+    {
+      let checked = 0, bad = [];
+      for (const s of back) {
+        const into = s.t % 1000;
+        if (into < 120 || into > 960) continue;
+        if (!s.year) continue;
+        const want = expectYearParts(s.t);
+        for (const r of s.year.reels) {
+          const exp = expectDigitOf(want, r.key, r.idx, r.digits);
+          if (r.shown !== exp) bad.push(`${s.t}: year.${r.key}${r.idx} 显示${r.shown} 期望${exp}`);
+        }
+        checked++;
+      }
+      ok('切回后年份行数字立刻是对的（副行一直在喂值，不需要补滚）',
+        bad.length === 0 && checked > 0,
+        bad.slice(0, 2).join(' | ') || `核对了 ${checked} 帧 × 8 根`);
+    }
   }
 
   win.hide();

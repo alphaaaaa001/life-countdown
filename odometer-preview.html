@@ -309,6 +309,25 @@ function odoSplitDuration(diff) {
   };
 }
 
+// 距「今年结束」（次年 1/1 00:00 本地时间）还有多久。
+// 与上面那条的关键区别：**小时是总小时数，不是 0-23** ——
+// 1 月 1 日 00:00 那一刻约 8784 小时（闰年 366 天），所以这一行的小时是 4 位数。
+function odoSplitYearSpan(diff) {
+  if (diff <= 0) return { hours: 0, minutes: 0, seconds: 0 };
+  return {
+    hours:   Math.floor(diff / 3600000),
+    minutes: Math.floor((diff % 3600000) / 60000),
+    seconds: Math.floor((diff % 60000) / 1000)
+  };
+}
+
+// 今年结束的那个瞬间（本地时区）。跨年那一刻它自动变成「下一年的结束」，
+// 不需要用户重设 —— 但数值会从 0000:00:00 直接跳到 8783:59:59，
+// 所以调用方必须显式让滚轮落位（见 odoSnapRow 的说明）。
+function odoYearEnd(now) {
+  return new Date(now.getFullYear() + 1, 0, 1);
+}
+
 // 数值 → 定长数字数组（高位补零，超长截尾）
 function odoDigitsOf(value, count) {
   return String(Math.max(0, Math.floor(value)))
@@ -319,14 +338,29 @@ function odoDigitsOf(value, count) {
 }
 
 // 每一位的「圈长」（这根滚轮上到底印几个数字就回绕）：
-//   个位 0-9 → 10 格 ；分/秒的十位 0-5 → 6 格 ；小时的十位 0-2 → 3 格
+//   个位 0-9 → 10 格 ；分/秒的十位 0-5 → 6 格 ；时的十位 0-2 → 3 格
 // 关键：十位不是 0-9 的十格轮。秒从 00 跳到 59 时，十位是 0→5，
 // 若按十格轮算就得一次滚 5 格（糊成一片、方向还乱）；按 6 格轮算，
 // 每一次永远只滚 1 格，跟机械里程表一样匀速。
+//
+// 圈长原来是写死的（hours 十位 → 3），加「今年剩余」那一行就不够用了：
+// 它的总小时数最大 8784（闰年 366 天），小时要 4 位，而千位只会用到 0-8 → 圈长 9。
+// 所以改成**由该字段的取值范围推导**：某一位上出现过的最大数字 + 1 就是圈长。
+//   距今年结束 hours ∈ 0..8784 → 千位 9 格、百/十/个位 10 格
+//   生命倒计时 hours ∈ 0..23   → 十位 3 格、个位 10 格（与原来完全一致）
+const ODO_FIELD_MAX = { hours: 23, minutes: 59, seconds: 59, yearHours: 8784 };
+
+// 某一位上出现过的最大数字：
+// maxValue 已经越过「该位满十进一」的边界（≥ 10×位权 − 1）时，这一位 0-9 全都出现过
+function odoMaxDigitAt(maxValue, placeValue) {
+  if (maxValue >= placeValue * 10 - 1) return 9;
+  return Math.floor(maxValue / placeValue) % 10;
+}
+
 function odoCycleFor(group, idx) {
-  if (idx === 0) return 10;                       // 个位
-  if (group === 'hours') return 3;                // 时十位：0,1,2
-  return 6;                                       // 分/秒十位：0-5
+  const max = ODO_FIELD_MAX[group];
+  if (max === undefined) return 10;               // 没登记过的字段按十格轮兜底
+  return odoMaxDigitAt(max, Math.pow(10, idx)) + 1;
 }
 
 // 滚轮第 i 格上印的数字。倒计时递减、滚轮一律「向上滚」，

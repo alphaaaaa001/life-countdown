@@ -3,13 +3,16 @@ let countdownData = null;
 let intervalId = null;
 let alignTimeoutId = null;      // 对齐到真实秒边界的那个一次性定时器
 let heartbeatRafId = null;
+let odoYearStamp = null;        // 上次喂值时的「年」——用来抓跨年那一刻
+let oyMode = 'year';            // 心跳线下方那一块当前显示：'year' 年份倒计时 / 'life' 剩余生命
 
 // 页面加载时检查是否有保存的数据
 window.addEventListener('DOMContentLoaded', () => {
   loadSavedData();
   loadTheme();
   initHeartbeat();
-  buildOdoRow();
+  odoBuildRows();
+  oyApplyMode();
 });
 
 // 加载主题
@@ -287,6 +290,25 @@ function odoSplitDuration(diff) {
   };
 }
 
+// 距「今年结束」（次年 1/1 00:00 本地时间）还有多久。
+// 与上面那条的关键区别：**小时是总小时数，不是 0-23** ——
+// 1 月 1 日 00:00 那一刻约 8784 小时（闰年 366 天），所以这一行的小时是 4 位数。
+function odoSplitYearSpan(diff) {
+  if (diff <= 0) return { hours: 0, minutes: 0, seconds: 0 };
+  return {
+    hours:   Math.floor(diff / 3600000),
+    minutes: Math.floor((diff % 3600000) / 60000),
+    seconds: Math.floor((diff % 60000) / 1000)
+  };
+}
+
+// 今年结束的那个瞬间（本地时区）。跨年那一刻它自动变成「下一年的结束」，
+// 不需要用户重设 —— 但数值会从 0000:00:00 直接跳到 8783:59:59，
+// 所以调用方必须显式让滚轮落位（见 odoSnapRow 的说明）。
+function odoYearEnd(now) {
+  return new Date(now.getFullYear() + 1, 0, 1);
+}
+
 // 数值 → 定长数字数组（高位补零，超长截尾）
 function odoDigitsOf(value, count) {
   return String(Math.max(0, Math.floor(value)))
@@ -297,14 +319,29 @@ function odoDigitsOf(value, count) {
 }
 
 // 每一位的「圈长」（这根滚轮上到底印几个数字就回绕）：
-//   个位 0-9 → 10 格 ；分/秒的十位 0-5 → 6 格 ；小时的十位 0-2 → 3 格
+//   个位 0-9 → 10 格 ；分/秒的十位 0-5 → 6 格 ；时的十位 0-2 → 3 格
 // 关键：十位不是 0-9 的十格轮。秒从 00 跳到 59 时，十位是 0→5，
 // 若按十格轮算就得一次滚 5 格（糊成一片、方向还乱）；按 6 格轮算，
 // 每一次永远只滚 1 格，跟机械里程表一样匀速。
+//
+// 圈长原来是写死的（hours 十位 → 3），加「今年剩余」那一行就不够用了：
+// 它的总小时数最大 8784（闰年 366 天），小时要 4 位，而千位只会用到 0-8 → 圈长 9。
+// 所以改成**由该字段的取值范围推导**：某一位上出现过的最大数字 + 1 就是圈长。
+//   距今年结束 hours ∈ 0..8784 → 千位 9 格、百/十/个位 10 格
+//   生命倒计时 hours ∈ 0..23   → 十位 3 格、个位 10 格（与原来完全一致）
+const ODO_FIELD_MAX = { hours: 23, minutes: 59, seconds: 59, yearHours: 8784 };
+
+// 某一位上出现过的最大数字：
+// maxValue 已经越过「该位满十进一」的边界（≥ 10×位权 − 1）时，这一位 0-9 全都出现过
+function odoMaxDigitAt(maxValue, placeValue) {
+  if (maxValue >= placeValue * 10 - 1) return 9;
+  return Math.floor(maxValue / placeValue) % 10;
+}
+
 function odoCycleFor(group, idx) {
-  if (idx === 0) return 10;                       // 个位
-  if (group === 'hours') return 3;                // 时十位：0,1,2
-  return 6;                                       // 分/秒十位：0-5
+  const max = ODO_FIELD_MAX[group];
+  if (max === undefined) return 10;               // 没登记过的字段按十格轮兜底
+  return odoMaxDigitAt(max, Math.pow(10, idx)) + 1;
 }
 
 // 滚轮第 i 格上印的数字。倒计时递减、滚轮一律「向上滚」，
@@ -366,12 +403,46 @@ function odoEffectiveDur(durWant, speed) {
   return Math.min(durWant, cap);
 }
 // <<< ODO_PURE_MATH_END
-let odoReels = [];          // 6 个滚轮：时/分/秒 各两位
-let odoDaysEl = null;       // 天数（静态数字，不滚）
+// ── 读数行的注册表 ───────────────────────────────────────────────────
+// 现在有三行滚轮，各自独立、各按自己的真值走：
+//   life  → 老读秒卡里的「剩余生命倒计时」（天静态 + 时/分/秒，6 根）
+//   year  → 心跳线下方新块的「距离今年结束」（时/分/秒，小时是总小时数 ⇒ 4 位，8 根）
+//   life2 → 新块切到「剩余生命」时显示的那一行（与 life 同构）
+// 为什么三行各自独立、而不是共用一组滚轮来回重建：
+//   ① 位数不同（6 vs 8），共用就得每次切换重建 DOM，正好卡在 glitch 动效中间；
+//   ② 两行都【持续喂值】⇒ 每行的数值始终连续，切换只是换个显示，
+//      不会出现「12 时 → 8700 时」那种数值突变要滚一大段。
+const ODO_ROWS_CFG = {
+  life: {
+    el: 'odoRow', days: true,
+    fields: [
+      { key: 'hours',   cycleKey: 'hours',   digits: 2, unit: '时' },
+      { key: 'minutes', cycleKey: 'minutes', digits: 2, unit: '分' },
+      { key: 'seconds', cycleKey: 'seconds', digits: 2, unit: '秒' }
+    ]
+  },
+  year: {
+    el: 'odoRowYear', days: false,
+    fields: [
+      { key: 'hours',   cycleKey: 'yearHours', digits: 4, unit: '时' },
+      { key: 'minutes', cycleKey: 'minutes',   digits: 2, unit: '分' },
+      { key: 'seconds', cycleKey: 'seconds',   digits: 2, unit: '秒' }
+    ]
+  },
+  life2: {
+    el: 'odoRowLife2', days: true,
+    fields: [
+      { key: 'hours',   cycleKey: 'hours',   digits: 2, unit: '时' },
+      { key: 'minutes', cycleKey: 'minutes', digits: 2, unit: '分' },
+      { key: 'seconds', cycleKey: 'seconds', digits: 2, unit: '秒' }
+    ]
+  }
+};
+let odoRows = {};           // name → { el, reels[], daysEl }
 
 // 一位数字 = 一个竖向滚轮
-function odoMakeReel(group, idx) {
-  const cycle = odoCycleFor(group, idx);
+function odoMakeReel(cycleKey, idx, digits) {
+  const cycle = odoCycleFor(cycleKey, idx);
   const reel = document.createElement('span');
   reel.className = 'reel';
 
@@ -383,7 +454,8 @@ function odoMakeReel(group, idx) {
     track.appendChild(cell);
   }
   reel.appendChild(track);
-  return { reel, track, group, idx, cycle, offset: 0, digit: 0, ready: false, lastFeedAt: 0 };
+  return { reel, track, cycleKey, idx, digits, cycle,
+           offset: 0, digit: 0, ready: false, lastFeedAt: 0 };
 }
 
 // 单位（天/时/分/秒）
@@ -394,38 +466,47 @@ function odoMakeUnit(text) {
   return s;
 }
 
-// 搭出「X 天 HH 时 MM 分 SS 秒」这一行
-function buildOdoRow() {
-  const row = document.getElementById('odoRow');
-  row.innerHTML = '';
-  odoReels = [];
-
-  odoDaysEl = document.createElement('span');
-  odoDaysEl.className = 'odo-num';
-  odoDaysEl.textContent = '0';
-  row.appendChild(odoDaysEl);
-  row.appendChild(odoMakeUnit('天'));
-
-  for (const [group, label] of [['hours', '时'], ['minutes', '分'], ['seconds', '秒']]) {
-    for (let idx = 1; idx >= 0; idx--) {     // 1 = 十位，0 = 个位
-      const r = odoMakeReel(group, idx);
-      odoReels.push(r);
-      row.appendChild(r.reel);
-    }
-    row.appendChild(odoMakeUnit(label));
-  }
-  odoApplyVars();
-}
-
-// 把定稿参数写进 CSS 变量（JS 常量是唯一真源；style.css 里的同值只是启动前的兜底）
-function odoApplyVars() {
-  const row = document.getElementById('odoRow');
-  row.style.setProperty('--digit-want', ODO_DIGIT_PX + 'px');
+// 把定稿参数写进某一行的 CSS 变量（JS 常量是唯一真源；style.css 里的同值只是启动前的兜底）
+function odoApplyVars(el) {
+  el.style.setProperty('--digit-want', ODO_DIGIT_PX + 'px');
   // 走「有效滚动时长」而不是直接写设定值：万一以后把读数节拍调快了，
   // 这里会自动按节拍钳制，不会再出现「屏幕上映着错数字」那种情况。
-  row.style.setProperty('--reel-dur', odoEffectiveDur(ODO_ROLL_MS, 1) + 'ms');
-  row.style.setProperty('--reel-ease', ODO_EASE);
+  el.style.setProperty('--reel-dur', odoEffectiveDur(ODO_ROLL_MS, 1) + 'ms');
+  el.style.setProperty('--reel-ease', ODO_EASE);
 }
+
+// 搭出一行：「X 天 HH 时 MM 分 SS 秒」（days=false 时只搭后面的时/分/秒）
+function odoBuildRow(name) {
+  const cfg = ODO_ROWS_CFG[name];
+  const row = document.getElementById(cfg.el);
+  if (!row) return;
+  row.innerHTML = '';
+
+  const rec = { el: row, reels: [], daysEl: null };
+
+  if (cfg.days) {
+    rec.daysEl = document.createElement('span');
+    rec.daysEl.className = 'odo-num';
+    rec.daysEl.textContent = '0';
+    row.appendChild(rec.daysEl);
+    row.appendChild(odoMakeUnit('天'));
+  }
+
+  for (const f of cfg.fields) {
+    for (let idx = f.digits - 1; idx >= 0; idx--) {    // 从最高位排到个位
+      const r = odoMakeReel(f.cycleKey, idx, f.digits);
+      r.key = f.key;
+      rec.reels.push(r);
+      row.appendChild(r.reel);
+    }
+    row.appendChild(odoMakeUnit(f.unit));
+  }
+
+  odoApplyVars(row);
+  odoRows[name] = rec;
+}
+
+function odoBuildRows() { for (const name of Object.keys(ODO_ROWS_CFG)) odoBuildRow(name); }
 
 // 无动画地把滚轮钉到某个格索引
 function odoPinReel(r, offset) {
@@ -469,24 +550,67 @@ function odoFeedReel(r, digit) {
   r.track.style.transform = `translateY(calc(${-r.offset} * var(--cell)))`;
 }
 
-// 用一份读数刷新整行滚轮
-function odoFeedParts(parts) {
-  if (!odoDaysEl) return;
-  odoDaysEl.textContent = String(parts.days);
+// 用一份读数刷新某一行的滚轮
+function odoFeedRow(name, parts) {
+  const rec = odoRows[name];
+  if (!rec) return;
+  if (rec.daysEl) rec.daysEl.textContent = String(parts.days == null ? 0 : parts.days);
 
-  const want = {
-    hours:   odoDigitsOf(parts.hours, 2),
-    minutes: odoDigitsOf(parts.minutes, 2),
-    seconds: odoDigitsOf(parts.seconds, 2)
-  };
-  for (const r of odoReels) {
-    odoFeedReel(r, want[r.group][1 - r.idx]);
+  for (const r of rec.reels) {
+    const ds = odoDigitsOf(parts[r.key] == null ? 0 : parts[r.key], r.digits);
+    odoFeedReel(r, ds[r.digits - 1 - r.idx]);      // idx 0 = 个位 ⇒ 取数组最后一位
   }
 }
 
-// 「重新设置」后把滚轮状态清干净：下次启动直接落位，不从上一次的偏移开始滚
-function odoResetReels() {
-  for (const r of odoReels) { r.ready = false; r.offset = 0; r.digit = 0; r.lastFeedAt = 0; }
+// 让某一行（不给名字即全部）下次喂值时【直接落位】、不滚。
+// 什么时候必须用它 —— 「时间没跳、但数值跳了」的场合：
+//   · 跨年那一刻（0000:00:00 → 8783:59:59）
+//   · 重新设置 / 换了出生日期与寿命
+//   · 切换显示的行
+// 为什么不能只靠 odoIsBigJump：它判的是「距上次喂值的毫秒差 > 3s」，
+// 而这些场合相邻两次喂值只隔 1 秒 —— 时间差判据根本看不见数值突变。
+// （这是上轮把「防电风扇」从 delta>=cycle 改成时间差驱动时留下的盲区。）
+function odoSnapRow(name) {
+  const rec = odoRows[name];
+  if (!rec) return;
+  for (const r of rec.reels) { r.ready = false; r.offset = 0; r.digit = 0; r.lastFeedAt = 0; }
+}
+function odoSnapAll() { for (const name of Object.keys(odoRows)) odoSnapRow(name); }
+
+// ── 心跳线下方那一块：年份倒计时 ⇄ 剩余生命 ─────────────────────────────
+// 两行都在被【持续喂值】，所以切换只是「换个显示」——数字本身不会突变。
+// 视觉上用一次赛博朋克 glitch 把它盖住：横向错位 + 青/粉分离，然后换数。
+const OY_TEXT = {
+  year: { title: '距离今年结束',   btn: '⇄ 剩余生命' },
+  life: { title: '剩余生命倒计时', btn: '⇄ 今年剩余' }
+};
+
+// 把当前模式对应的文案与显隐落到 DOM（幂等，启动时也调它一次）
+function oyApplyMode() {
+  const sec = document.getElementById('oySection');
+  if (!sec) return;
+  document.getElementById('oyTitle').textContent = OY_TEXT[oyMode].title;
+  document.getElementById('oySwitch').textContent = OY_TEXT[oyMode].btn;
+  document.getElementById('odoRowYear').classList.toggle('hidden', oyMode !== 'year');
+  document.getElementById('odoRowLife2').classList.toggle('hidden', oyMode !== 'life');
+}
+
+function toggleYearMode() {
+  const sec = document.getElementById('oySection');
+  if (!sec) return;
+
+  // 重新触发动画：先摘 class、强制重排、再挂上
+  sec.classList.remove('glitching');
+  void sec.offsetWidth;
+  sec.classList.add('glitching');
+
+  // 换数放在抖动中途（动画 180ms），正好被错位帧盖住
+  setTimeout(() => {
+    oyMode = (oyMode === 'year') ? 'life' : 'year';
+    oyApplyMode();
+  }, 90);
+
+  setTimeout(() => sec.classList.remove('glitching'), 220);
 }
 
 // 加载保存的数据
@@ -585,7 +709,9 @@ function startCountdown() {
 function showCountdown() {
   document.getElementById('inputSection').classList.add('hidden');
   document.getElementById('countdownSection').classList.remove('hidden');
-  
+  document.getElementById('oySection').classList.remove('hidden');   // 心跳线下方的年份块
+  oyApplyMode();
+
   updateCountdown();
   generateHealthWarning();
 }
@@ -607,7 +733,17 @@ function updateCountdown() {
   
   // 到预期寿命终点（生日当天 00:00）还有多久 → 交给滚轮逐位翻牌
   const endDate = calcEndDate(birthDate, expectedAge);
-  odoFeedParts(odoSplitDuration(endDate - now));
+  const lifeParts = odoSplitDuration(endDate - now);
+  odoFeedRow('life', lifeParts);
+  odoFeedRow('life2', lifeParts);       // 心跳线下方那一块切到「剩余生命」时显示的那行
+
+  // 距「今年结束」（次年 1/1 00:00）还有多久。跨年那一刻年份会变 ——
+  // 数值从 0000:00:00 直接跳到 8783:59:59，而时间差判据看不见这种突变，
+  // 所以在这里显式让年行落位。
+  const year = now.getFullYear();
+  if (odoYearStamp !== null && year !== odoYearStamp) odoSnapRow('year');
+  odoYearStamp = year;
+  odoFeedRow('year', odoSplitYearSpan(odoYearEnd(now) - now));
 
   // 计算人生进度
   const progressPercent = ((currentAge / expectedAge) * 100).toFixed(2);
@@ -678,7 +814,10 @@ function resetApp() {
       clearTimeout(alignTimeoutId);
       alignTimeoutId = null;
     }
-    odoResetReels();          // 滚轮状态清干净，下次启动直接落位不滚
+    odoSnapAll();             // 滚轮状态清干净，下次启动直接落位不滚
+    odoYearStamp = null;
+    oyMode = 'year';          // 复位后回到「今年倒计时」
+    oyApplyMode();
 
     // 清除数据
     countdownData = null;
@@ -690,6 +829,7 @@ function resetApp() {
     
     // 切换界面
     document.getElementById('countdownSection').classList.add('hidden');
+    document.getElementById('oySection').classList.add('hidden');
     document.getElementById('inputSection').classList.remove('hidden');
   }
 }

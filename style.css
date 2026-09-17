@@ -103,6 +103,12 @@ body {
   padding: 40px;
   position: relative;
   z-index: 1;
+  /* 竖向 flex + 至少一屏高：为的是让「年份倒计时」那一块用 margin-top:auto
+     钉在首屏底部 —— 心跳线是固定全屏背景、基线正好在视口垂直中线，
+     所以"在心跳线下方"= 放到首屏下半部分。 */
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
 }
 
 .header {
@@ -352,6 +358,105 @@ body {
   line-height: 1;
   margin: 0 0.42em 0 0.62em;
   padding-bottom: 0.58em;      /* 把单位提到数字基线附近 */
+}
+
+/* ── 心跳线下方的那一块：年份倒计时 ⇄ 剩余生命 ──────────────────────────
+   位置靠 .container 的 flex column + 这里的 margin-top:auto：
+   内容不足一屏时它贴着首屏底部（一定在心跳基线之下），
+   内容超一屏时它跟在内容流后面，往下滚就能看到。 */
+.year-timer-section {
+  --glitch-cyan: #00e5ff;
+  --glitch-pink: #ff2bd6;
+
+  margin-top: auto;             /* ← 关键：推到首屏底部 */
+  padding-top: 34px;
+  text-align: center;
+}
+
+.oy-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 4px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--panel-border);
+}
+
+.oy-title {
+  font-size: 0.9em;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+/* 右边那个切换按钮 */
+.oy-switch {
+  flex: none;
+  font: inherit;
+  font-size: 0.85em;
+  letter-spacing: 0.5px;
+  color: var(--primary-light);
+  background: var(--input-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 999px;
+  padding: 7px 14px;
+  cursor: pointer;
+  transition: all 0.25s ease;
+}
+
+.oy-switch:hover {
+  color: var(--primary-color);
+  border-color: var(--primary-color);
+  box-shadow: 0 0 12px rgba(74, 158, 255, 0.35);
+}
+
+.oy-switch:active { transform: translateY(1px); }
+.oy-switch:focus-visible { outline: 2px solid var(--primary-color); outline-offset: 2px; }
+
+/* ── 赛博朋克 glitch：切换时先抖一下、再换数 ────────────────────────────
+   横向错位 + 青/粉分离 + 亮度闪烁，180ms 用 steps 跳帧（要的就是不连续）。
+   ⚠️ .reel 有 overflow:hidden + 上下遮罩 ⇒ 分离量必须小（这里 2~3px），
+      偏移再大就会被滚轮框裁掉，只剩糊。
+   ⚠️ 动画只挂在 .odo-row（整体错位）和 .reel-track > i（数字的色分离）上；
+      刻意【不碰】.reel-track 自己的 transform，免得跟滚轮的滚动过渡打架。 */
+@keyframes odoJitter {
+  0%   { transform: translateX(0);    filter: brightness(1); }
+  18%  { transform: translateX(-8px); filter: brightness(1.7); }
+  38%  { transform: translateX(7px);  filter: brightness(0.6); }
+  58%  { transform: translateX(-4px); filter: brightness(1.5); }
+  78%  { transform: translateX(3px);  filter: brightness(0.8); }
+  100% { transform: translateX(0);    filter: brightness(1); }
+}
+
+@keyframes odoRgbSplit {
+  0%, 100% { text-shadow: none; }
+  18%      { text-shadow:  3px 0 var(--glitch-cyan), -3px 0 var(--glitch-pink); }
+  38%      { text-shadow: -3px 0 var(--glitch-cyan),  3px 0 var(--glitch-pink); }
+  58%      { text-shadow:  2px 0 var(--glitch-cyan), -2px 0 var(--glitch-pink); }
+  78%      { text-shadow: -2px 0 var(--glitch-cyan),  2px 0 var(--glitch-pink); }
+}
+
+.year-timer-section.glitching .odo-row {
+  animation: odoJitter 180ms steps(1, end) 1;
+}
+
+.year-timer-section.glitching .reel-track > i {
+  animation: odoRgbSplit 180ms steps(1, end) 1;
+}
+
+/* 尊重系统的「减少动态效果」：直接换数，不抖 */
+@media (prefers-reduced-motion: reduce) {
+  .year-timer-section.glitching .odo-row,
+  .year-timer-section.glitching .reel-track > i {
+    animation: none;
+  }
+}
+
+/* 浅色主题下压暗一点，青/粉在白底上才看得清 */
+body.light-mode .year-timer-section {
+  --glitch-cyan: #0091b3;
+  --glitch-pink: #d4009c;
 }
 
 /* 进度条 */

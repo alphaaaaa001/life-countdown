@@ -76,6 +76,19 @@
 
       <button class="btn-reset" onclick="resetApp()">重新设置</button>
     </div>
+
+    <!-- 心跳线（全屏背景，基线正好在视口垂直中线）【下方】的那一块：
+         年份倒计时 ⇄ 剩余生命，右边按钮切换。
+         靠 .container 的 flex + margin-top:auto 钉在首屏底部，确保落在基线之下。
+         两行读数由 script.js 的 odoBuildRows() 生成（年份行 8 根滚轮，生命行 6 根） -->
+    <div class="year-timer-section hidden" id="oySection">
+      <div class="oy-head">
+        <span class="oy-title" id="oyTitle">距离今年结束</span>
+        <button class="oy-switch" id="oySwitch" type="button" onclick="toggleYearMode()">⇄ 剩余生命</button>
+      </div>
+      <div class="odo-row" id="odoRowYear"></div>
+      <div class="odo-row hidden" id="odoRowLife2"></div>
+    </div>
   </div>
 
   <script src="script.js"></script>
