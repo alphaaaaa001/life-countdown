@@ -18,6 +18,8 @@
   --primary-color: #4a9eff;
   --primary-light: #7ec8ff;
   --warning-color: #ffa04a;
+  /* 预留：健康提示现在是"无壳"的，想要一条左侧警示条时用它
+     （例：.warning-section { border-left: 3px solid var(--warning-border); }） */
   --warning-border: rgba(255, 160, 74, 0.4);
   /* 心跳线颜色 —— 预留：当前 canvas 里的颜色是硬编码的（Canvas 2D 读不到 CSS 变量），
      想自己 DIY 心跳线配色时，从这里改、再把 heartbeatFrame 里的取值换成读它即可。 */
@@ -241,29 +243,24 @@ body {
   margin-bottom: 30px;
 }
 
+/* 读数卡：**无壳** —— 故意没有背景、没有边框、没有阴影、没有 hover 抬升，
+   让数字直接浮在全屏心跳线背景上（alpha：「让倒计时和背景心跳线融为一体」）。
+   读数层在 canvas 之上（z-index 0 vs 1），所以剥掉壳之后，心跳线就从读数背后穿过去。
+   ⚠️ 想还原成"盒子"：把下面 background/border/box-shadow 三项恢复，
+      再把 .stat-card:hover 那条加回来即可（见 git 历史）。 */
 .stat-card {
-  background: var(--panel-bg);
-  border: 2px solid var(--panel-border);
-  border-radius: 15px;
-  padding: 25px;
+  background: transparent;
+  border: none;
+  padding: 22px 0;
   text-align: center;
-  box-shadow: 0 5px 20px var(--shadow-color);
-  transition: all 0.3s ease;
+  box-shadow: none;
 }
 
-.stat-card:hover {
-  border-color: var(--primary-color);
-  transform: translateY(-3px);
-  box-shadow: 0 8px 25px var(--shadow-color);
-}
-
-/* 读秒卡：视觉主角，给更足的呼吸感和一点向内的聚光 */
+/* 读秒卡：视觉主角，靠字号和留白撑场面（不再用"聚光背景"） */
 .stat-card.large {
   grid-column: 1 / -1;
-  padding: 34px 25px 30px;
-  background:
-    radial-gradient(120% 160% at 50% 0%, rgba(74, 158, 255, 0.10) 0%, rgba(74, 158, 255, 0) 65%),
-    var(--panel-bg);
+  padding: 34px 0 30px;
+  background: none;
 }
 
 .stat-label {
@@ -447,13 +444,12 @@ body.glitching .reel-track > i {
 }
 
 /* 进度条 */
+/* 进度区段：同样无壳（和读数一个待遇）—— 进度条自己带着底色，不需要外面再套一层 */
 .progress-section {
-  background: var(--panel-bg);
-  border: 2px solid var(--panel-border);
-  border-radius: 15px;
-  padding: 25px;
+  background: transparent;
+  border: none;
+  padding: 0;
   margin-bottom: 20px;
-  transition: all 0.3s ease;
 }
 
 .progress-label {
@@ -497,14 +493,13 @@ body.glitching .reel-track > i {
 }
 
 /* 警告面板 */
+/* 健康提示：也没壳了 —— 靠标题的警示色 + 文字本身说话，不再套框 */
 .warning-section {
-  background: var(--panel-bg);
-  border: 2px solid var(--warning-border);
-  border-radius: 15px;
-  padding: 25px;
+  background: transparent;
+  border: none;
+  padding: 0;
   margin-bottom: 20px;
   animation: fadeIn 1s ease 0.5s backwards;
-  transition: all 0.3s ease;
 }
 
 .warning-title {

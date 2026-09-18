@@ -286,5 +286,45 @@ section('[E] 年份倒计时页（⇄ 切页）');
     !/oySection|oySwitch|oyTitle|odoRowLife2/.test(jsSrc + htmlSrc + css));
 }
 
+// ============================================================
+// [F] 读数「无壳」—— 与背景心跳线融为一体
+// ============================================================
+section('[F] 读数无壳（与心跳线融为一体）');
+
+{
+  // ⚠️ 先剥掉 CSS 注释再断言 —— 注释里常常写着「示例代码」（本项目就有
+  //    「.warning-section { border-left: … }」「把 .stat-card:hover 加回来」这类说明），
+  //    不剥的话正则会被注释骗到，报出根本不存在的"违规"。实测踩过。
+  const css = read('style.css').replace(/\/\*[\s\S]*?\*\//g, '');
+  const blockOf = (sel) => {
+    const pat = sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\{([^}]*)\\}';
+    const m = css.match(new RegExp(pat));
+    return m ? m[1] : '';
+  };
+  const card = blockOf('.stat-card');
+  const large = blockOf('.stat-card.large');
+  const prog = blockOf('.progress-section');
+  const warn = blockOf('.warning-section');
+
+  ok('.stat-card：无背景 / 无边框 / 无阴影（数字直接坐在背景上）',
+    /background:\s*transparent/.test(card) && /border:\s*none/.test(card) &&
+    /box-shadow:\s*none/.test(card),
+    card.trim().replace(/\s+/g, ' ').slice(0, 64));
+  ok('大卡不再有「聚光背景」', /background:\s*none/.test(large));
+  ok('卡片 hover 抬升已删除（不再有 .stat-card:hover 规则）',
+    !/\.stat-card:hover\s*\{/.test(css));
+  ok('进度区段也去壳（进度条自己带底色，不需要外面再套一层）',
+    /background:\s*transparent/.test(prog) && /border:\s*none/.test(prog));
+  ok('健康提示也去壳（靠标题的警示色说话）',
+    /background:\s*transparent/.test(warn) && /border:\s*none/.test(warn));
+
+  // 反面也要守住：别把该留的也扒了
+  ok('初始化表单仍保留面板（表单需要「能填」的样子）',
+    /\.panel\s*\{[^}]*border:\s*2px solid var\(--panel-border\)/.test(css));
+  ok('两个圆形按钮仍保留底面（剥掉就看不见按钮了）',
+    /\.theme-toggle\s*\{[^}]*background:\s*var\(--panel-bg\)/.test(css) &&
+    /\.view-toggle\s*\{[^}]*background:\s*var\(--panel-bg\)/.test(css));
+}
+
 console.log(`\n\x1b[1m===== ${pass} 通过 / ${fail} 失败 =====\x1b[0m\n`);
 process.exit(fail ? 1 : 0);

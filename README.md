@@ -189,6 +189,25 @@ if (odoYearStamp !== null && year !== odoYearStamp) odoSnapRow('year');   // 跨
 
 ---
 
+## 视觉：为什么读数没有「盒子」
+
+心跳线是**全屏背景**（`<canvas>` 固定在 z-index 0，内容在 z-index 1）。如果读数住在带背景、边框、阴影的卡片里，它和那条线就永远是"两层贴在一起"。
+
+所以倒计时视图里的三层面板**故意都没有壳**：
+
+| 元素 | 处理 |
+|---|---|
+| `.stat-card`（读数卡 / 年数卡）| `background: transparent` · `border: none` · `box-shadow: none`，**hover 抬升也删掉** |
+| `.stat-card.large` | 连那层向内的"聚光"渐变也去掉（`background: none`）|
+| `.progress-section`（人生进度 / 今年进度）| 去壳 —— 进度条自己带底色，不需要外面再套一层 |
+| `.warning-section`（健康提示）| 去壳 —— 靠标题的警示色说话 |
+
+于是心跳线就从读数的**背后穿过去**，两者成了一幅画。
+
+**没跟着去壳的两处**（有意保留）：初始化表单的 `.panel`（表单需要"能填"的样子），以及右上角两个圆形按钮（`background: var(--panel-bg)` —— 剥了底面就看不见按钮了）。想还原成"盒子"，把上表三项恢复即可；`--warning-border` 还留着，想要一条左侧警示条就 `border-left: 3px solid var(--warning-border)`。
+
+---
+
 ## 调参：把心跳调成你喜欢的样子
 
 所有参数集中在 `script.js` 顶部，注释里写了各自作用：
