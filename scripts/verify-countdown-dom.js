@@ -86,7 +86,7 @@ new Promise(resolve => {
     };
   };
   const tick = () => {
-    out.push({ t: Date.now(), life: readRow('life'), year: readRow('year'), life2: readRow('life2') });
+    out.push({ t: Date.now(), life: readRow('life'), year: readRow('year') });
     if (performance.now() - t0 < ${ms}) setTimeout(tick, ${step});
     else resolve(out);
   };
@@ -135,16 +135,17 @@ app.whenReady().then(async () => {
         };
       };
       return {
-        life: info('odoRow'), year: info('odoRowYear'), life2: info('odoRowLife2'),
-        oyVisible: !document.getElementById('oySection').classList.contains('hidden'),
-        oyTitle: document.getElementById('oyTitle').textContent,
-        oyBtn: document.getElementById('oySwitch').textContent,
+        life: info('odoRow'), year: info('odoRowYear'),
+        viewBtnVisible: !document.getElementById('viewToggle').classList.contains('hidden'),
+        viewIcon: document.getElementById('viewIcon').textContent,
+        yearHidden: document.getElementById('yearSection').classList.contains('hidden'),
         sectionVisible: !document.getElementById('countdownSection').classList.contains('hidden')
       };
     })()
   `);
-  ok('倒计时区块已显示', wiring.sectionVisible);
-  ok('心跳线下方的年份块已显示', wiring.oyVisible);
+  ok('默认在生命页（生命页显示、年份页藏着）', wiring.sectionVisible && wiring.yearHidden);
+  ok('切页按钮已出现（初始化那一屏不该有它）', wiring.viewBtnVisible);
+  ok('按钮图标指向「年份」（📅）', wiring.viewIcon === '📅', wiring.viewIcon);
   ok('生命行：6 根滚轮（时/分/秒 各两位）+ 静态天数',
     wiring.life.count === 6 && wiring.life.hasDays, `实得 ${wiring.life.count} 根`);
   ok('生命行圈长 = [3,10,6,10,6,10]（时十位 3 格、分/秒十位 6 格）',
@@ -155,10 +156,6 @@ app.whenReady().then(async () => {
   ok('年份行圈长 = [9,10,10,10,6,10,6,10]（千位只用到 0-8）',
     JSON.stringify(wiring.year.cycles) === JSON.stringify([9, 10, 10, 10, 6, 10, 6, 10]),
     JSON.stringify(wiring.year.cycles));
-  ok('默认显示年份行（生命副行收着）', !wiring.year.hidden && wiring.life2.hidden);
-  ok('标题/按钮文案跟着当前模式',
-    /今年结束/.test(wiring.oyTitle) && /剩余生命/.test(wiring.oyBtn),
-    `${wiring.oyTitle} | ${wiring.oyBtn}`);
   ok('滚动时长真的生效 600ms', wiring.life.dur === '0.6s', wiring.life.dur);
   ok('缓动曲线真的生效（平滑）', /0\.22,\s*0\.61,\s*0\.36,\s*1/.test(wiring.life.ease), wiring.life.ease);
   ok('数字字号 80px（窄窗口自适应钳制允许 ≤2% 收紧）',
@@ -278,37 +275,34 @@ app.whenReady().then(async () => {
   }
 
   // ============================================================
-  // [5] 切换按钮：年份 ⇄ 剩余生命（赛博朋克 glitch 抖一下再换数）
-  console.log('\n[5] 切换按钮（年份 ⇄ 剩余生命）');
+  // [5] 切页按钮：生命页 ⇄ 年份页（赛博朋克 glitch 抖一下再翻页）
+  console.log('\n[5] 右上角切页按钮（生命页 ⇄ 年份页）');
   {
     const snap = `(() => ({
-      glitching: document.getElementById('oySection').classList.contains('glitching'),
-      title: document.getElementById('oyTitle').textContent,
-      btn: document.getElementById('oySwitch').textContent,
-      yearHidden: document.getElementById('odoRowYear').classList.contains('hidden'),
-      life2Hidden: document.getElementById('odoRowLife2').classList.contains('hidden')
+      glitching: document.body.classList.contains('glitching'),
+      lifeHidden: document.getElementById('countdownSection').classList.contains('hidden'),
+      yearHidden: document.getElementById('yearSection').classList.contains('hidden'),
+      icon: document.getElementById('viewIcon').textContent,
+      hint: document.getElementById('viewToggle').title
     }))()`;
 
-    await win.webContents.executeJavaScript(`document.getElementById('oySwitch').click(); true`);
+    await win.webContents.executeJavaScript(`document.getElementById('viewToggle').click(); true`);
     const mid = await win.webContents.executeJavaScript(snap);
-    ok('点下去立刻开始抖（glitching 类挂上）', mid.glitching);
+    ok('点下去立刻开始抖（body.glitching 挂上）', mid.glitching);
 
     await new Promise(r => setTimeout(r, 400));
     const after = await win.webContents.executeJavaScript(snap);
-    ok('抖完自动摘掉 glitching 类（不会一直闪）', !after.glitching);
-    ok('已切到剩余生命：年份行收、副行出', after.yearHidden && !after.life2Hidden);
-    ok('标题与按钮文案跟着换',
-      /剩余生命/.test(after.title) && /今年剩余/.test(after.btn),
-      `${after.title} | ${after.btn}`);
+    ok('抖完自动摘掉 glitching（不会一直闪）', !after.glitching);
+    ok('已切到年份页：生命页收起、年份页露脸', after.lifeHidden && !after.yearHidden);
+    ok('按钮图标与提示跟着换（⏳ / 切回生命）',
+      after.icon === '⏳' && /生命/.test(after.hint), `${after.icon} | ${after.hint}`);
 
-    // 切回去 —— 关键：**副行也一直在被喂值**，所以切过去的瞬间数字就该是对的，
-    // 不需要等一拍、也不会出现「从 12 时滚到 8700 时」那种电风扇。
-    await win.webContents.executeJavaScript(`document.getElementById('oySwitch').click(); true`);
-    await new Promise(r => setTimeout(r, 450));
-    const back = await win.webContents.executeJavaScript(SAMPLER(1400, 30));
+    // 切过去的瞬间年份行就该是对的 —— 它一直在被喂值，不是切过来才补算，
+    // 所以不存在「从 12 时滚到 8700 时」那种电风扇。
     {
+      const yr = await win.webContents.executeJavaScript(SAMPLER(1400, 30));
       let checked = 0, bad = [];
-      for (const s of back) {
+      for (const s of yr) {
         const into = s.t % 1000;
         if (into < 120 || into > 960) continue;
         if (!s.year) continue;
@@ -319,10 +313,25 @@ app.whenReady().then(async () => {
         }
         checked++;
       }
-      ok('切回后年份行数字立刻是对的（副行一直在喂值，不需要补滚）',
+      ok('年份页读数立刻正确（一直喂值，不需要补滚）',
         bad.length === 0 && checked > 0,
         bad.slice(0, 2).join(' | ') || `核对了 ${checked} 帧 × 8 根`);
     }
+
+    // 今年进度条：切到年份页后应当有值
+    const yp = await win.webContents.executeJavaScript(`
+      (() => ({ pct: document.getElementById('yearPercent').textContent,
+                w: document.getElementById('yearFill').style.width }))()
+    `);
+    ok('今年进度条有值、且与宽度一致（0 < pct < 100）',
+      /%$/.test(yp.pct) && parseFloat(yp.pct) > 0 && parseFloat(yp.pct) < 100 && yp.w === yp.pct,
+      `${yp.pct} / width=${yp.w}`);
+
+    // 切回生命页
+    await win.webContents.executeJavaScript(`document.getElementById('viewToggle').click(); true`);
+    await new Promise(r => setTimeout(r, 400));
+    const back = await win.webContents.executeJavaScript(snap);
+    ok('切回生命页正常', !back.lifeHidden && back.yearHidden && back.icon === '📅');
   }
 
   win.hide();

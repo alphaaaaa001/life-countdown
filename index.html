@@ -14,7 +14,14 @@
   <button class="theme-toggle" id="themeToggle" onclick="toggleTheme()">
     <span class="theme-icon">🌙</span>
   </button>
-  
+
+  <!-- 视图切换：生命倒计时 ⇄ 年份倒计时。和主题按钮同一条右边界，竖排在它正下方。
+       启动倒计时之后才出现（初始化那一屏没有可切的东西） -->
+  <button class="view-toggle hidden" id="viewToggle" onclick="toggleYearView()"
+          title="切换到年份倒计时">
+    <span class="view-icon" id="viewIcon">📅</span>
+  </button>
+
   <div class="container">
     <div class="header">
       <h1>🚀 人生倒计时</h1>
@@ -77,17 +84,30 @@
       <button class="btn-reset" onclick="resetApp()">重新设置</button>
     </div>
 
-    <!-- 心跳线（全屏背景，基线正好在视口垂直中线）【下方】的那一块：
-         年份倒计时 ⇄ 剩余生命，右边按钮切换。
-         靠 .container 的 flex + margin-top:auto 钉在首屏底部，确保落在基线之下。
-         两行读数由 script.js 的 odoBuildRows() 生成（年份行 8 根滚轮，生命行 6 根） -->
-    <div class="year-timer-section hidden" id="oySection">
-      <div class="oy-head">
-        <span class="oy-title" id="oyTitle">距离今年结束</span>
-        <button class="oy-switch" id="oySwitch" type="button" onclick="toggleYearMode()">⇄ 剩余生命</button>
+    <!-- 年份倒计时「页」：和生命页像两个页面 —— 切过来时上面那些卡片整体收起，
+         只剩这张大卡 + 今年进度 + 重新设置。
+         位置靠 .container 的 flex + margin-top:auto 钉在首屏底部 ⇒ 落在心跳基线
+         （全屏背景、基线正好在视口垂直中线）下方 -->
+    <div class="countdown-section hidden" id="yearSection">
+      <div class="stats-grid">
+        <div class="stat-card large">
+          <div class="stat-label">距离今年结束</div>
+          <!-- 4 位小时 + 时/分/秒，由 script.js 的 odoBuildRows() 生成（8 根滚轮） -->
+          <div class="odo-row" id="odoRowYear"></div>
+        </div>
       </div>
-      <div class="odo-row" id="odoRowYear"></div>
-      <div class="odo-row hidden" id="odoRowLife2"></div>
+
+      <div class="progress-section">
+        <div class="progress-label">
+          <span>今年进度</span>
+          <span id="yearPercent">0%</span>
+        </div>
+        <div class="progress-bar">
+          <div class="progress-fill" id="yearFill"></div>
+        </div>
+      </div>
+
+      <button class="btn-reset" onclick="resetApp()">重新设置</button>
     </div>
   </div>
 

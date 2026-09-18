@@ -321,9 +321,8 @@ console.log('\n[10] 一致性自检');
   // 驱动方式：必须挂在真实读数上，而不是"页面加载即启动的固定时长动画"
   // （2026-09-17 改成多行注册表后，喂值入口从 odoFeedParts 换成 odoFeedRow）
   ok('每拍都由 updateCountdown 喂真实读数（生命行 + 年份行）',
-    /odoFeedRow\('life', lifeParts\)/.test(src) &&
-    /odoFeedRow\('life2', lifeParts\)/.test(src) &&
-    /odoFeedRow\('year', odoSplitYearSpan\(odoYearEnd\(now\) - now\)\)/.test(src));
+    /odoFeedRow\('life', odoSplitDuration\(endDate - now\)\)/.test(src) &&
+    /odoFeedRow\('year', odoSplitYearSpan\(nextJan1 - now\)\)/.test(src));
   ok('时/分/秒 都参与滚动：每行按 digits 逐位建滚轮（生命行 2+2+2 = 6 根）',
     /key: 'hours',\s+cycleKey: 'hours',\s+digits: 2/.test(src) &&
     /key: 'minutes',\s+cycleKey: 'minutes',\s+digits: 2/.test(src) &&

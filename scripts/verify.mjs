@@ -221,9 +221,9 @@ ok('心跳预览页不再自己手写一份 ECG_POINTS（必须来自同一块�
   `出现 ${(HB_PREVIEW.match(/const ECG_POINTS\s*=\s*\[/g) || []).length} 次`);
 
 // ============================================================
-// [E] 心跳线下方的「年份倒计时 ⇄ 剩余生命」
+// [E] 「年份倒计时」页 + 右上角切页按钮
 // ============================================================
-section('[E] 年份倒计时块（心跳线下方）');
+section('[E] 年份倒计时页（⇄ 切页）');
 
 {
   // 读数行注册表里的 el 是【字符串】，不在 getElementById 里 —— 上面那条交叉核对盖不到，单独查
@@ -231,19 +231,30 @@ section('[E] 年份倒计时块（心跳线下方）');
   const missCfg = cfgIds.filter((id) => !htmlSrc.includes(`id="${id}"`));
   ok(`读数行注册表里 ${cfgIds.length} 个 id 在 HTML 中都存在`, missCfg.length === 0,
     missCfg.length ? '缺失: ' + missCfg.join(', ') : cfgIds.join(' / '));
-  for (const id of ['oySection', 'oyTitle', 'oySwitch']) {
-    ok(`年份块元素存在：${id}`, htmlSrc.includes(`id="${id}"`));
+
+  for (const id of ['yearSection', 'viewToggle', 'viewIcon', 'yearPercent', 'yearFill', 'odoRowYear']) {
+    ok(`年份页元素存在：${id}`, htmlSrc.includes(`id="${id}"`));
   }
-  ok('切换按钮挂在 toggleYearMode() 上',
-    /onclick="toggleYearMode\(\)"/.test(htmlSrc) && /function toggleYearMode\(\)/.test(jsSrc));
+  ok('切页按钮挂在 toggleYearView() 上',
+    /onclick="toggleYearView\(\)"/.test(htmlSrc) && /function toggleYearView\(\)/.test(jsSrc));
+
+  // 年份页 = 大卡 + 今年进度 + 重新设置（生命页那两张"年数"小卡不在里面）
+  const yi = htmlSrc.indexOf('id="yearSection"');
+  const yearSec = yi >= 0 ? htmlSrc.slice(yi, yi + 1500) : '';
+  ok('年份页里有「今年进度」，且不含「已度过 / 剩余」那两张年数小卡',
+    /今年进度/.test(yearSec) && !/id="passedYears"/.test(yearSec) &&
+    !/id="remainingYears"/.test(yearSec));
+  ok('年份页沿用同一套卡片样式（stat-card large + odo-row）',
+    /class="stat-card large"/.test(yearSec) && /id="odoRowYear"/.test(yearSec));
 
   // 年份行：小时 4 位、圈长表登记了 yearHours、终点是次年 1/1 本地时间
   ok('年份行小时 4 位，且圈长表登记了 yearHours = 8784',
     /cycleKey: 'yearHours',\s+digits: 4/.test(jsSrc) && /yearHours:\s*8784/.test(jsSrc));
   ok('年份终点 = 次年 1/1（本地时区）',
     /new Date\(now\.getFullYear\(\) \+ 1, 0, 1\)/.test(jsSrc));
-  ok('两种模式都有文案（OY_TEXT.year / OY_TEXT.life）',
-    /year:\s*\{\s*title:/.test(jsSrc) && /life:\s*\{\s*title:/.test(jsSrc));
+  ok('今年进度 = (now − 1/1) / (次年1/1 − 1/1)，并写进进度条',
+    /\(now - jan1\) \/ \(nextJan1 - jan1\)/.test(jsSrc) &&
+    /getElementById\('yearFill'\)\.style\.width/.test(jsSrc));
 
   // 圈长不再写死：旧的三行 if 必须消失，改由取值范围表推导
   ok('圈长不再写死（旧的 `if (group === \'hours\') return 3;` 已消失）',
@@ -253,21 +264,26 @@ section('[E] 年份倒计时块（心跳线下方）');
   // 「防电风扇」的盲区：跨年/改设置时【数值突变但时间没跳】，时间差判据看不见
   ok('跨年显式落位（不指望时间差判据）',
     /year !== odoYearStamp\) odoSnapRow\('year'\)/.test(jsSrc));
-  ok('重新设置时清干净所有行 + 模式复位',
-    /odoSnapAll\(\)/.test(jsSrc) && /oyMode = 'year'/.test(jsSrc));
+  ok('重新设置时清干净所有行 + 回到生命页 + 收起切页按钮',
+    /odoSnapAll\(\)/.test(jsSrc) && /viewMode = 'life'/.test(jsSrc) &&
+    /getElementById\('viewToggle'\)\.classList\.add\('hidden'\)/.test(jsSrc));
 
   const css = read('style.css');
-  ok('CSS：glitch 两段动画（整体错位 + 数字色分离）',
+  ok('CSS：glitch 两段动画（整体错位 + 数字色分离），挂在 body 上',
     /@keyframes odoJitter/.test(css) && /@keyframes odoRgbSplit/.test(css) &&
-    /\.glitching \.odo-row/.test(css) && /\.glitching \.reel-track > i/.test(css));
-  ok('CSS：尊重 prefers-reduced-motion（不抖，直接换数）',
-    /@media \(prefers-reduced-motion: reduce\)/.test(css) &&
-    /animation: none/.test(css));
+    /body\.glitching \.odo-row/.test(css) && /body\.glitching \.reel-track > i/.test(css));
+  ok('CSS：尊重 prefers-reduced-motion（不抖，直接换页）',
+    /@media \(prefers-reduced-motion: reduce\)/.test(css) && /animation: none/.test(css));
   ok('CSS：动画没碰 .reel-track 自己的 transform（否则会与滚动过渡打架）',
     !/glitching \.reel-track\s*\{/.test(css));
-  ok('布局机制：容器竖向 flex + 至少一屏高；新块 margin-top:auto ⇒ 落在心跳基线之下',
+  ok('CSS：切页按钮钉在主题按钮正下方（top:80 / right:20）',
+    /\.view-toggle\s*\{[^}]*top:\s*80px[^}]*right:\s*20px/.test(css));
+  ok('布局：容器竖向 flex + 至少一屏高；#yearSection margin-top:auto ⇒ 落在心跳基线之下',
     /flex-direction: column/.test(css) && /min-height: 100vh/.test(css) &&
-    /\.year-timer-section\s*\{[^}]*margin-top: auto/.test(css));
+    /#yearSection\s*\{[^}]*margin-top: auto/.test(css));
+  // 旧的「卡片内切换」那一套必须清干净 —— 上一版就在这里留过一堆死代码
+  ok('旧的卡片内切换已清除（oySection / oySwitch / oyTitle / odoRowLife2 一个不留）',
+    !/oySection|oySwitch|oyTitle|odoRowLife2/.test(jsSrc + htmlSrc + css));
 }
 
 console.log(`\n\x1b[1m===== ${pass} 通过 / ${fail} 失败 =====\x1b[0m\n`);

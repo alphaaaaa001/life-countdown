@@ -4,7 +4,7 @@ let intervalId = null;
 let alignTimeoutId = null;      // 对齐到真实秒边界的那个一次性定时器
 let heartbeatRafId = null;
 let odoYearStamp = null;        // 上次喂值时的「年」——用来抓跨年那一刻
-let oyMode = 'year';            // 心跳线下方那一块当前显示：'year' 年份倒计时 / 'life' 剩余生命
+let viewMode = 'life';          // 当前在哪一「页」：'life' 剩余生命 / 'year' 年份倒计时
 
 // 页面加载时检查是否有保存的数据
 window.addEventListener('DOMContentLoaded', () => {
@@ -12,7 +12,7 @@ window.addEventListener('DOMContentLoaded', () => {
   loadTheme();
   initHeartbeat();
   odoBuildRows();
-  oyApplyMode();
+  applyView();
 });
 
 // 加载主题
@@ -404,14 +404,13 @@ function odoEffectiveDur(durWant, speed) {
 }
 // <<< ODO_PURE_MATH_END
 // ── 读数行的注册表 ───────────────────────────────────────────────────
-// 现在有三行滚轮，各自独立、各按自己的真值走：
-//   life  → 老读秒卡里的「剩余生命倒计时」（天静态 + 时/分/秒，6 根）
-//   year  → 心跳线下方新块的「距离今年结束」（时/分/秒，小时是总小时数 ⇒ 4 位，8 根）
-//   life2 → 新块切到「剩余生命」时显示的那一行（与 life 同构）
-// 为什么三行各自独立、而不是共用一组滚轮来回重建：
-//   ① 位数不同（6 vs 8），共用就得每次切换重建 DOM，正好卡在 glitch 动效中间；
-//   ② 两行都【持续喂值】⇒ 每行的数值始终连续，切换只是换个显示，
-//      不会出现「12 时 → 8700 时」那种数值突变要滚一大段。
+// 两行滚轮各自独立、各按自己的真值走，都在被持续喂值：
+//   life → 生命页那张大卡「剩余生命倒计时」（天静态 + 时/分/秒，6 根）
+//   year → 年份页那张大卡「距离今年结束」（时/分/秒，小时是总小时数 ⇒ 4 位，8 根）
+// 为什么不共用一组滚轮、切页时重建：
+//   ① 位数不同（6 vs 8），重建的时机正好卡在切换动效中间；
+//   ② 两行都持续喂值 ⇒ 每行的数值始终连续，切页只是换个显示，
+//      不会出现「12 时 ⇄ 8700 时」那种数值突变要滚一大段（也不用补"落位"）。
 const ODO_ROWS_CFG = {
   life: {
     el: 'odoRow', days: true,
@@ -427,14 +426,6 @@ const ODO_ROWS_CFG = {
       { key: 'hours',   cycleKey: 'yearHours', digits: 4, unit: '时' },
       { key: 'minutes', cycleKey: 'minutes',   digits: 2, unit: '分' },
       { key: 'seconds', cycleKey: 'seconds',   digits: 2, unit: '秒' }
-    ]
-  },
-  life2: {
-    el: 'odoRowLife2', days: true,
-    fields: [
-      { key: 'hours',   cycleKey: 'hours',   digits: 2, unit: '时' },
-      { key: 'minutes', cycleKey: 'minutes', digits: 2, unit: '分' },
-      { key: 'seconds', cycleKey: 'seconds', digits: 2, unit: '秒' }
     ]
   }
 };
@@ -577,40 +568,40 @@ function odoSnapRow(name) {
 }
 function odoSnapAll() { for (const name of Object.keys(odoRows)) odoSnapRow(name); }
 
-// ── 心跳线下方那一块：年份倒计时 ⇄ 剩余生命 ─────────────────────────────
-// 两行都在被【持续喂值】，所以切换只是「换个显示」——数字本身不会突变。
-// 视觉上用一次赛博朋克 glitch 把它盖住：横向错位 + 青/粉分离，然后换数。
-const OY_TEXT = {
-  year: { title: '距离今年结束',   btn: '⇄ 剩余生命' },
-  life: { title: '剩余生命倒计时', btn: '⇄ 今年剩余' }
-};
+// ── 两个「页面」：生命倒计时 ⇄ 年份倒计时 ──────────────────────────────
+// 切换按钮在右上角（主题按钮正下方）。切过去像翻页：生命页那些卡片整体收起，
+// 只剩年份页的大卡 + 今年进度 + 重新设置。
+// 两行读数各自独立、都在持续喂值 ⇒ 切页只是"换个显示"，没有数值突变要补滚。
+const VIEW_ICON = { life: '📅', year: '⏳' };            // 图标 = 点它去哪儿
+const VIEW_HINT = { life: '切换到年份倒计时', year: '切回剩余生命倒计时' };
 
-// 把当前模式对应的文案与显隐落到 DOM（幂等，启动时也调它一次）
-function oyApplyMode() {
-  const sec = document.getElementById('oySection');
-  if (!sec) return;
-  document.getElementById('oyTitle').textContent = OY_TEXT[oyMode].title;
-  document.getElementById('oySwitch').textContent = OY_TEXT[oyMode].btn;
-  document.getElementById('odoRowYear').classList.toggle('hidden', oyMode !== 'year');
-  document.getElementById('odoRowLife2').classList.toggle('hidden', oyMode !== 'life');
+// 把当前 viewMode 落到 DOM（幂等：启动、切页、复位都调它）
+function applyView() {
+  const life = document.getElementById('countdownSection');
+  const year = document.getElementById('yearSection');
+  if (!life || !year) return;
+  const isYear = viewMode === 'year';
+  life.classList.toggle('hidden', isYear);
+  year.classList.toggle('hidden', !isYear);
+
+  const icon = document.getElementById('viewIcon');
+  const btn = document.getElementById('viewToggle');
+  if (icon) icon.textContent = VIEW_ICON[viewMode];
+  if (btn) btn.title = VIEW_HINT[viewMode];
 }
 
-function toggleYearMode() {
-  const sec = document.getElementById('oySection');
-  if (!sec) return;
+function toggleYearView() {
+  viewMode = (viewMode === 'life') ? 'year' : 'life';
 
-  // 重新触发动画：先摘 class、强制重排、再挂上
-  sec.classList.remove('glitching');
-  void sec.offsetWidth;
-  sec.classList.add('glitching');
+  // 赛博朋克 glitch：抖一下再换页。类挂在 body 上 ——
+  // 隐藏的那一页不参与渲染，所以只有即将露脸的那页会真的抖。
+  document.body.classList.remove('glitching');
+  void document.body.offsetWidth;                        // 强制重排 → 动画能重新触发
+  document.body.classList.add('glitching');
 
-  // 换数放在抖动中途（动画 180ms），正好被错位帧盖住
-  setTimeout(() => {
-    oyMode = (oyMode === 'year') ? 'life' : 'year';
-    oyApplyMode();
-  }, 90);
-
-  setTimeout(() => sec.classList.remove('glitching'), 220);
+  // 换页放在抖动中途（动画 180ms），正好被错位帧盖住
+  setTimeout(applyView, 90);
+  setTimeout(() => document.body.classList.remove('glitching'), 220);
 }
 
 // 加载保存的数据
@@ -708,9 +699,9 @@ function startCountdown() {
 // 显示倒计时界面
 function showCountdown() {
   document.getElementById('inputSection').classList.add('hidden');
-  document.getElementById('countdownSection').classList.remove('hidden');
-  document.getElementById('oySection').classList.remove('hidden');   // 心跳线下方的年份块
-  oyApplyMode();
+  document.getElementById('viewToggle').classList.remove('hidden');  // 启动后才给切页入口
+  viewMode = 'life';               // 每次都从生命页开始
+  applyView();
 
   updateCountdown();
   generateHealthWarning();
@@ -733,9 +724,7 @@ function updateCountdown() {
   
   // 到预期寿命终点（生日当天 00:00）还有多久 → 交给滚轮逐位翻牌
   const endDate = calcEndDate(birthDate, expectedAge);
-  const lifeParts = odoSplitDuration(endDate - now);
-  odoFeedRow('life', lifeParts);
-  odoFeedRow('life2', lifeParts);       // 心跳线下方那一块切到「剩余生命」时显示的那行
+  odoFeedRow('life', odoSplitDuration(endDate - now));
 
   // 距「今年结束」（次年 1/1 00:00）还有多久。跨年那一刻年份会变 ——
   // 数值从 0000:00:00 直接跳到 8783:59:59，而时间差判据看不见这种突变，
@@ -743,7 +732,15 @@ function updateCountdown() {
   const year = now.getFullYear();
   if (odoYearStamp !== null && year !== odoYearStamp) odoSnapRow('year');
   odoYearStamp = year;
-  odoFeedRow('year', odoSplitYearSpan(odoYearEnd(now) - now));
+
+  const jan1 = new Date(year, 0, 1);
+  const nextJan1 = odoYearEnd(now);
+  odoFeedRow('year', odoSplitYearSpan(nextJan1 - now));
+
+  // 今年进度：从 1/1 00:00 走到现在
+  const yearPercent = (((now - jan1) / (nextJan1 - jan1)) * 100).toFixed(2);
+  document.getElementById('yearPercent').textContent = yearPercent + '%';
+  document.getElementById('yearFill').style.width = yearPercent + '%';
 
   // 计算人生进度
   const progressPercent = ((currentAge / expectedAge) * 100).toFixed(2);
@@ -816,8 +813,8 @@ function resetApp() {
     }
     odoSnapAll();             // 滚轮状态清干净，下次启动直接落位不滚
     odoYearStamp = null;
-    oyMode = 'year';          // 复位后回到「今年倒计时」
-    oyApplyMode();
+    viewMode = 'life';        // 复位后回到生命页
+    applyView();
 
     // 清除数据
     countdownData = null;
@@ -829,7 +826,8 @@ function resetApp() {
     
     // 切换界面
     document.getElementById('countdownSection').classList.add('hidden');
-    document.getElementById('oySection').classList.add('hidden');
+    document.getElementById('yearSection').classList.add('hidden');
+    document.getElementById('viewToggle').classList.add('hidden');
     document.getElementById('inputSection').classList.remove('hidden');
   }
 }
